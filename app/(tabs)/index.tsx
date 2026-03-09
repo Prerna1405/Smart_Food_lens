@@ -1,98 +1,250 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  StyleSheet,
+  Text,
+  View,
+  SafeAreaView,
+  ScrollView,
+  TouchableOpacity,
+  Platform,
+} from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import moment from 'moment';
+import axios from 'axios';
+import { useUser } from '../../components/context/UserContext';
+import { useRouter } from 'expo-router';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+const HomeScreen = () => {
+  const router = useRouter();
+  const { todayTotals } = useUser();
+  const [lastThreeDaysData, setLastThreeDaysData] = useState<any[]>([]);
+  const API_URL =
+    Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
 
-export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  useEffect(() => {
+    (async () => {
+      try {
+        const response = await axios.get(`${API_URL}/api/scans/last-three-days`, {
+          timeout: 4000,
+        });
+        setLastThreeDaysData(response.data.data || []);
+      } catch {
+        setLastThreeDaysData([]);
+      }
+    })();
+  }, [API_URL]);
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+  const lastSevenDays = Array.from({ length: 7 }).map((_, i) =>
+    moment().subtract(6 - i, 'days')
   );
-}
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.container}>
+
+        {/* HEADER */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.title}>NutriScan</Text>
+          </View>
+          <Ionicons name="notifications-outline" size={24} color="white" />
+        </View>
+
+
+        {/* TODAY STATS */}
+        <Text style={styles.sectionTitle}>Today’s Intake</Text>
+        <View style={styles.statsGrid}>
+          <StatCard label="Calories" value={`${Math.round(todayTotals.calories)} kcal`} icon="flame-outline" />
+          <StatCard label="Protein" value={`${Math.round(todayTotals.protein)} g`} icon="barbell-outline" />
+          <StatCard label="Carbs" value={`${Math.round(todayTotals.carbs)} g`} icon="nutrition-outline" />
+          <StatCard label="Fat" value={`${Math.round(todayTotals.fat)} g`} icon="water-outline" />
+        </View>
+
+        {/* CALENDAR */}
+        <Text style={styles.sectionTitle}>This Week</Text>
+        <View style={styles.calendarRow}>
+          {lastSevenDays.map((day, i) => {
+            const isToday = day.isSame(moment(), 'day');
+            return (
+              <TouchableOpacity
+                key={i}
+                onPress={() => router.push({ pathname: '/calendar' as any, params: { date: day.format('YYYY-MM-DD') } })}
+                style={[
+                  styles.calendarDay,
+                  isToday && styles.calendarToday,
+                ]}>
+                <Text style={styles.calendarText}>{day.format('DD')}</Text>
+                <Text style={styles.calendarSub}>{day.format('dd')}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* LAST 3 DAYS */}
+        <Text style={styles.sectionTitle}>Last 3 Days</Text>
+        {lastThreeDaysData.map((day, index) => {
+          const calories = day.scans.reduce(
+            (sum: number, scan: any) =>
+              sum +
+              scan.foodItems.reduce(
+                (s: number, i: any) => s + (i.nutrients?.calories || 0),
+                0
+              ),
+            0
+          );
+
+          return (
+            <View key={index} style={styles.historyCard}>
+              <Text style={styles.historyDate}>
+                {moment(day.date).format('MMMM D')}
+              </Text>
+              <Text style={styles.historyValue}>{calories} kcal</Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+
+      {/* FLOATING ACTION BUTTON */}
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => router.push('/scan' as any)}>
+        <Ionicons name="camera" size={26} color="#fff" />
+      </TouchableOpacity>
+    </SafeAreaView>
+  );
+};
+
+/* ---------------- SMALL COMPONENT ---------------- */
+
+const StatCard = ({ label, value, icon }: any) => (
+  <View style={styles.statCard}>
+    <Ionicons name={icon} size={22} color="#4FC3F7" />
+    <Text style={styles.statValue}>{value}</Text>
+    <Text style={styles.statLabel}>{label}</Text>
+  </View>
+);
+
+/* ---------------- STYLES ---------------- */
 
 const styles = StyleSheet.create({
-  titleContainer: {
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#121212',
+  },
+  container: {
+    padding: 16,
+    paddingBottom: 120,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  greeting: {
+    color: '#aaa',
+    fontSize: 14,
+  },
+  title: {
+    color: '#fff',
+    fontSize: 26,
+    fontWeight: 'bold',
+  },
+  scanCard: {
+    backgroundColor: '#007AFF',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    padding: 18,
+    borderRadius: 16,
+    marginBottom: 20,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  scanText: {
+    color: '#fff',
+    fontSize: 18,
+    marginLeft: 12,
+    fontWeight: '600',
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
+  sectionTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginVertical: 12,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  statCard: {
+    width: '48%',
+    backgroundColor: '#1E1E1E',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+  },
+  statValue: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginTop: 6,
+  },
+  statLabel: {
+    color: '#aaa',
+    fontSize: 13,
+  },
+  calendarRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  calendarDay: {
+    backgroundColor: '#1E1E1E',
+    width: 44,
+    height: 60,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarToday: {
+    backgroundColor: '#007AFF',
+  },
+  calendarText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  calendarSub: {
+    color: '#ddd',
+    fontSize: 12,
+  },
+  historyCard: {
+    backgroundColor: '#1E1E1E',
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  historyDate: {
+    color: '#fff',
+    fontSize: 16,
+  },
+  historyValue: {
+    color: '#4FC3F7',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  fab: {
     position: 'absolute',
+    bottom: 24,
+    right: 24,
+    backgroundColor: '#007AFF',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 8,
   },
 });
+
+export default HomeScreen;

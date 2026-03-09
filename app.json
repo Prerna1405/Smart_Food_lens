@@ -8,6 +8,9 @@
     "scheme": "foodscanner",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "extra": {
+      "API_URL": "http://10.158.199.182:8000"
+    },
     "ios": {
       "supportsTablet": true
     },
