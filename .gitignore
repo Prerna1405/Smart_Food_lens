@@ -1,0 +1,38 @@
+# Environments
+.venv/
+venv/
+env/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Node/Frontend
+node_modules/
+dist/
+build/
+.next/
+.cache/
+
+# Data and Models
+food_model/dataset/
+food_model/train/
+food_model/val/
+*.pth
+*.xlsx
+*.csv
+!Anuvaad_INDB_2024.11.xlsx
+!foodmodel/classes.json
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store

@@ -1,0 +1,4 @@
+@echo off
+cd /d "%~dp0backend"
+python -c "import uvicorn; uvicorn.run('app:app', host='127.0.0.1', port=8000, reload=False)"
+

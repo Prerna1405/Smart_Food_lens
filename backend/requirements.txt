@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+tensorflow
+pillow
+numpy
+python-multipart
+ultralytics
+pyyaml
+datasets
+huggingface_hub
+pandas
+openpyxl
