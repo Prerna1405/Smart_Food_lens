@@ -359,5 +359,77 @@
         "timestamp": "2026-03-05T15:53:55.448854"
       }
     ]
+  },
+  {
+    "date": "2026-03-13",
+    "scans": [
+      {
+        "foodItems": [],
+        "confidence": 0.0,
+        "quantity": 0.0,
+        "timestamp": "2026-03-13T19:29:06.008058"
+      },
+      {
+        "foodItems": [],
+        "confidence": 0.0,
+        "quantity": 0.0,
+        "timestamp": "2026-03-13T20:53:39.468545"
+      },
+      {
+        "foodItems": [
+          {
+            "food": "naan",
+            "nutrients": {
+              "calories": 286.44964599609375,
+              "protein": 8.05210018157959,
+              "carbs": 51.75419998168945,
+              "fat": 4.987837314605713
+            }
+          }
+        ],
+        "confidence": 0.8186811208724976,
+        "quantity": 0.0,
+        "timestamp": "2026-03-13T23:22:12.296800"
+      },
+      {
+        "foodItems": [
+          {
+            "food": "naan",
+            "nutrients": {
+              "calories": 286.44964599609375,
+              "protein": 8.05210018157959,
+              "carbs": 51.75419998168945,
+              "fat": 4.987837314605713
+            }
+          }
+        ],
+        "confidence": 0.8186811208724976,
+        "quantity": 0.0,
+        "timestamp": "2026-03-13T23:24:55.471284"
+      }
+    ]
+  },
+  {
+    "date": "2026-03-29",
+    "scans": [
+      {
+        "foodItems": [],
+        "timestamp": "2026-03-29T18:53:32.495971"
+      },
+      {
+        "foodItems": [
+          {
+            "food": "Dhokla",
+            "nutrients": {
+              "calories": 216.48545837402344,
+              "protein": 13.447745323181152,
+              "carbs": 30.68433380126953,
+              "fat": 5.283342361450195
+            }
+          }
+        ],
+        "timestamp": "2026-03-29T18:59:55.755087"
+      }
+    ]
   }
 ]

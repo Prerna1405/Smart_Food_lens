@@ -10,3 +10,8 @@ datasets
 huggingface_hub
 pandas
 openpyxl
+motor
+passlib[bcrypt]
+python-jose[cryptography]
+python-dotenv
+pymongo

@@ -18,8 +18,17 @@ transform = transforms.Compose([
 ])
 
 # Load dataset
-train_dir = "foodmodel/train"
-val_dir = "foodmodel/val"
+train_dir = os.path.join(os.path.dirname(__file__), "train")
+val_dir = os.path.join(os.path.dirname(__file__), "val")
+
+# 4. RETRAINING SUPPORT: Automatically rebuild class list from dataset folders
+if os.path.exists(train_dir):
+    current_classes = sorted([d for d in os.listdir(train_dir) if os.path.isdir(os.path.join(train_dir, d))])
+    with open(os.path.join(os.path.dirname(__file__), "classes.json"), "w") as f:
+        json.dump(current_classes, f)
+    print(f"Classes list updated from {train_dir}: {current_classes}")
+else:
+    print(f"Warning: {train_dir} not found. Using existing folders in train/val.")
 
 print(f"Checking directories: {train_dir}, {val_dir}")
 if not os.path.exists(train_dir):
@@ -46,9 +55,10 @@ val_loader = DataLoader(val_data, batch_size=32)
 
 # Save class names
 classes = train_data.classes
-with open("foodmodel/classes.json", "w") as f:
+classes_json_path = os.path.join(os.path.dirname(__file__), "classes.json")
+with open(classes_json_path, "w") as f:
     json.dump(classes, f)
-print(f"Classes saved: {classes}")
+print(f"Classes saved to {classes_json_path}: {classes}")
 
 num_classes = len(classes)
 

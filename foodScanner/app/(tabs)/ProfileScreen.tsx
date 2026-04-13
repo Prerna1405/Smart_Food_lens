@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,769 +6,612 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Modal,
-  FlatList,
   SafeAreaView,
   ActivityIndicator,
+  Dimensions,
   Alert,
   Platform,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
-import Icon from '@expo/vector-icons/Ionicons';
-import axios from 'axios';
-import moment from 'moment';
+import Toast from 'react-native-toast-message';
+import { supabase } from '../../lib/supabase';
+import { Colors, Shadows, BorderRadius, Spacing } from '../../constants/theme';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
+import { BlurView } from 'expo-blur';
+import GoogleFit, { Scopes } from 'react-native-google-fit';
 
-interface Option {
-  label: string;
-  value: string;
-}
+const { width } = Dimensions.get('window');
 
-interface NutritionResult {
-  calories: number;
-  protein: number;
-  carbs: number;
-  fats: number;
-  aiSuggestion: string;
-}
-
-const Dropdown = ({
-  label,
-  value,
-  options,
-  onSelect,
-}: {
-  label: string;
-  value: string;
-  options: Option[];
-  onSelect: (val: string) => void;
-}) => {
-  const [visible, setVisible] = useState(false);
-
-  return (
-    <View style={styles.dropdownContainer}>
-      <Text style={styles.label}>{label}</Text>
-      <TouchableOpacity
-        style={styles.dropdownButton}
-        onPress={() => setVisible(true)}
-      >
-        <Text style={styles.dropdownText}>{value || 'Select'}</Text>
-        <Icon name="chevron-down-outline" size={20} color="#aaa" />
-      </TouchableOpacity>
-
-      <Modal visible={visible} transparent animationType="fade">
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          onPress={() => setVisible(false)}
-        >
-          <View style={styles.modalContent}>
-            <FlatList
-              data={options}
-              keyExtractor={(item) => item.value}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.optionItem}
-                  onPress={() => {
-                    onSelect(item.value);
-                    setVisible(false);
-                  }}
-                >
-                  <Text style={styles.optionText}>{item.label}</Text>
-                </TouchableOpacity>
-              )}
-            />
-          </View>
-        </TouchableOpacity>
-      </Modal>
-    </View>
-  );
+// ✅ Proper Types
+type UserType = {
+  id: string;
+  email?: string;
+  username?: string;
 };
 
-const ProgressBar = ({
-  label,
-  current,
-  target,
-  color,
-  icon,
-  unit = 'g',
-}: {
-  label: string;
-  current: number;
-  target: number;
-  color: string;
-  icon: keyof typeof Icon.glyphMap;
-  unit?: string;
-}) => {
-  const progress = Math.min(Math.max(current / target, 0), 1);
-  const percentage = Math.round(progress * 100);
-
-  return (
-    <View style={styles.progressRow}>
-      <View style={[styles.iconContainer, { backgroundColor: `${color}20` }]}>
-        <Icon name={icon} size={24} color={color} />
-      </View>
-      
-      <View style={styles.progressContent}>
-        <View style={styles.progressHeader}>
-          <Text style={styles.progressLabel}>{label}</Text>
-          <Text style={styles.progressValue}>
-            <Text style={{ color: color, fontWeight: 'bold' }}>{current}</Text> / {target} {unit}
-          </Text>
-        </View>
-        
-        <View style={styles.progressBarBackground}>
-          <View
-            style={[
-              styles.progressBarFill,
-              { width: `${percentage}%`, backgroundColor: color },
-            ]}
-          />
-        </View>
-      </View>
-    </View>
-  );
+type ProfileType = {
+  name: string;
+  age: string;
+  weight: string;
+  height: string;
+  gender: 'male' | 'female' | 'other';
+  activity_level: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
+  goal: 'lose' | 'maintain' | 'gain';
 };
 
 const ProfileScreen = () => {
-  const [age, setAge] = useState('33');
-  const [weight, setWeight] = useState('200'); // lbs
-  const [heightFt, setHeightFt] = useState('5');
-  const [heightIn, setHeightIn] = useState('10');
-  const [gender, setGender] = useState('Male');
-  const [vegan, setVegan] = useState('No');
-  const [allergy, setAllergy] = useState('None');
-  const [activityLevel, setActivityLevel] = useState('Lightly active (light exercise/sports 1-3 days/week)');
-  
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<NutritionResult | null>(null);
+  const [user, setUser] = useState<UserType | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isWatchConnected, setIsWatchConnected] = useState(false);
 
-  // Dynamic state for today's intake
-  const [todayIntake, setTodayIntake] = useState({
-    calories: 0,
-    protein: 0,
-    carbs: 0,
-    fats: 0,
+  const [profile, setProfile] = useState<ProfileType>({
+    name: '',
+    age: '',
+    weight: '',
+    height: '',
+    gender: 'male',
+    activity_level: 'moderate',
+    goal: 'maintain',
   });
 
-  const API_URL =
-    Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
+  const [stats, setStats] = useState({
+    steps: 0,
+    caloriesBurned: 0,
+    bmi: 0,
+    bmr: 0,
+    targetCalories: 2000,
+  });
 
-  const fetchTodayIntake = async () => {
+  // ✅ Load User
+  useEffect(() => {
+    getUser();
+  }, []);
+
+  const getUser = async () => {
+    setLoading(true);
     try {
-      const today = moment().format('YYYY-MM-DD');
-      const response = await axios.get(`${API_URL}/api/scans/by-date?date=${today}`, { timeout: 4000 });
-      const totals = response.data?.totals || { calories: 0, protein: 0, carbs: 0, fat: 0 };
-      setTodayIntake({
-        calories: Math.round(totals.calories || 0),
-        protein: Math.round(totals.protein || 0),
-        carbs: Math.round(totals.carbs || 0),
-        fats: Math.round(totals.fat || 0),
-      });
-    } catch (error) {
-      console.log('Error fetching daily intake:', error);
-      // Fallback or silent fail
+      const { data: { user: authUser }, error } = await supabase.auth.getUser();
+
+      if (error || !authUser) {
+        setLoading(false);
+        return;
+      }
+
+      const u: UserType = {
+        id: authUser.id,
+        email: authUser.email,
+        username: authUser.user_metadata?.username,
+      };
+
+      setUser(u);
+      await fetchProfile(u.id);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Re-fetch data whenever screen comes into focus
-  useFocusEffect(
-    useCallback(() => {
-      if (result) {
-        fetchTodayIntake();
-      }
-    }, [result])
-  );
+  // ✅ Fetch Profile
+  const fetchProfile = async (id: string) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', id)
+      .single();
 
-  const genderOptions = [
-    { label: 'Male', value: 'Male' },
-    { label: 'Female', value: 'Female' },
-    { label: 'Other', value: 'Other' },
-  ];
-
-  const veganOptions = [
-    { label: 'No', value: 'No' },
-    { label: 'Yes', value: 'Yes' },
-  ];
-
-  const allergyOptions = [
-    { label: 'None', value: 'None' },
-    { label: 'Peanuts', value: 'Peanuts' },
-    { label: 'Dairy', value: 'Dairy' },
-    { label: 'Gluten', value: 'Gluten' },
-    { label: 'Soy', value: 'Soy' },
-    { label: 'Eggs', value: 'Eggs' },
-    { label: 'Fish', value: 'Fish' },
-    { label: 'Shellfish', value: 'Shellfish' },
-    { label: 'Tree Nuts', value: 'Tree Nuts' },
-  ];
-
-  const activityOptions = [
-    { label: 'Sedentary (little or no exercise)', value: 'Sedentary (little or no exercise)' },
-    { label: 'Lightly active (light exercise/sports 1-3 days/week)', value: 'Lightly active (light exercise/sports 1-3 days/week)' },
-    { label: 'Moderately active (moderate exercise/sports 3-5 days/week)', value: 'Moderately active (moderate exercise/sports 3-5 days/week)' },
-    { label: 'Very active (hard exercise/sports 6-7 days a week)', value: 'Very active (hard exercise/sports 6-7 days a week)' },
-    { label: 'Extra active (very hard exercise/sports and a physical job)', value: 'Extra active (very hard exercise/sports and a physical job)' },
-  ];
-
-  const fetchAIHealthSuggestion = async (
-    userStats: any
-  ): Promise<string> => {
-    // TODO: Integrate with real AI API (OpenAI, Gemini, etc.)
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        let suggestion = "Here is your personalized health insight:\n\n";
-        
-        suggestion += "• **Core Focus**: Maintain a balanced diet rich in whole foods.\n";
-
-        if (userStats.vegan === 'Yes') {
-          suggestion += "• **Vegan Nutrition**: Ensure sufficient B12 intake through fortified foods or supplements. Combine legumes and grains to get complete proteins.\n";
-        }
-
-        if (userStats.activityLevel.includes('Very active') || userStats.activityLevel.includes('Extra active')) {
-          suggestion += "• **Fueling Activity**: Your high energy output requires prioritizing complex carbs before workouts and protein immediately after for recovery.\n";
-        } else if (userStats.activityLevel.includes('Sedentary')) {
-          suggestion += "• **Weight Management**: Focus on high-volume, low-calorie foods (like leafy greens) to feel full without exceeding your energy needs.\n";
-        }
-
-        if (userStats.allergy !== 'None') {
-          suggestion += `• **Allergy Alert**: Strictly avoid ${userStats.allergy}. Always check labels for hidden ingredients.\n`;
-        }
-
-        suggestion += "\n**Goal**: Adhere to your daily macro targets to optimize energy levels and long-term health.";
-        
-        resolve(suggestion);
-      }, 2000);
-    });
-  };
-
-  const handleNext = async () => {
-    if (!age || !weight || !heightFt || !heightIn) {
-      Alert.alert("Missing Info", "Please fill in all fields");
+    if (error && error.code !== 'PGRST116') {
+      console.log('Fetch error:', error.message);
       return;
     }
 
-    setLoading(true);
-
-    // 1. Calculate BMR (Mifflin-St Jeor Equation)
-    const weightKg = parseFloat(weight) * 0.453592;
-    const heightCm = (parseInt(heightFt) * 30.48) + (parseInt(heightIn) * 2.54);
-    const ageVal = parseInt(age);
-
-    let bmr = 0;
-    if (gender === 'Male') {
-      bmr = (10 * weightKg) + (6.25 * heightCm) - (5 * ageVal) + 5;
-    } else {
-      bmr = (10 * weightKg) + (6.25 * heightCm) - (5 * ageVal) - 161;
+    if (data) {
+      setProfile({
+        name: data.name || '',
+        age: String(data.age || ''),
+        weight: String(data.weight || ''),
+        height: String(data.height || ''),
+        gender: data.gender || 'male',
+        activity_level: data.activity_level || 'moderate',
+        goal: data.goal || 'maintain',
+      });
+      calculateHealthMetrics(data);
     }
-
-    // 2. Activity Multiplier
-    let multiplier = 1.2;
-    if (activityLevel.includes('Lightly')) multiplier = 1.375;
-    if (activityLevel.includes('Moderately')) multiplier = 1.55;
-    if (activityLevel.includes('Very')) multiplier = 1.725;
-    if (activityLevel.includes('Extra')) multiplier = 1.9;
-
-    const tdee = Math.round(bmr * multiplier);
-
-    // 3. Macro Split
-    const protein = Math.round((tdee * 0.25) / 4);
-    const fats = Math.round((tdee * 0.25) / 9);
-    const carbs = Math.round((tdee * 0.5) / 4);
-
-    // 4. Get AI Suggestion
-    const suggestion = await fetchAIHealthSuggestion({
-      age, weight, gender, vegan, allergy, activityLevel
-    });
-
-    setResult({
-      calories: tdee,
-      protein,
-      fats,
-      carbs,
-      aiSuggestion: suggestion
-    });
-
-    // Fetch initial data immediately
-    fetchTodayIntake();
-    setLoading(false);
   };
 
-  const renderResults = () => {
-    if (!result) return null;
+  const calculateHealthMetrics = (p: any) => {
+    const weight = parseFloat(p.weight);
+    const height = parseFloat(p.height) / 100; // cm to m
+    const age = parseInt(p.age);
 
-    const caloriesRemaining = result.calories - todayIntake.calories;
-    const isTargetMet = caloriesRemaining <= 0;
+    if (!weight || !height || !age) return;
 
-    return (
-      <View style={styles.resultContainer}>
-        <Text style={styles.resultHeader}>Daily Tracker</Text>
+    // BMI
+    const bmi = weight / (height * height);
 
-        {/* Progress Section */}
-        <View style={styles.trackerCard}>
-          <Text style={styles.trackerTitle}>Today&apos;s Progress</Text>
-          
-          <ProgressBar 
-            label="Calories" 
-            current={todayIntake.calories} 
-            target={result.calories} 
-            unit="kcal"
-            color="#FF9500"
-            icon="flame"
-          />
-          <View style={styles.divider} />
-          
-          <ProgressBar 
-            label="Protein" 
-            current={todayIntake.protein} 
-            target={result.protein} 
-            color="#FF3B30"
-            icon="barbell"
-          />
-          <View style={styles.divider} />
+    // BMR (Mifflin-St Jeor Equation)
+    let bmr = 10 * weight + 6.25 * (height * 100) - 5 * age;
+    if (p.gender === 'male') bmr += 5;
+    else bmr -= 161;
 
-          <ProgressBar 
-            label="Carbs" 
-            current={todayIntake.carbs} 
-            target={result.carbs} 
-            color="#34C759"
-            icon="nutrition"
-          />
-          <View style={styles.divider} />
+    // TDEE (Total Daily Energy Expenditure)
+    const multipliers = {
+      sedentary: 1.2,
+      light: 1.375,
+      moderate: 1.55,
+      active: 1.725,
+      very_active: 1.9,
+    };
+    const tdee = bmr * (multipliers[p.activity_level as keyof typeof multipliers] || 1.2);
 
-          <ProgressBar 
-            label="Fats" 
-            current={todayIntake.fats} 
-            target={result.fats} 
-            color="#007AFF"
-            icon="water"
-          />
+    // Target Calories
+    let target = tdee;
+    if (p.goal === 'lose') target -= 500;
+    else if (p.goal === 'gain') target += 500;
 
-          {isTargetMet && (
-             <View style={styles.targetMetContainer}>
-               <Icon name="trophy" size={24} color="#FFD700" style={{marginRight: 8}} />
-               <Text style={styles.targetMetText}>Goal Reached! Great job!</Text>
-             </View>
-          )}
-        </View>
+    setStats(prev => ({
+      ...prev,
+      bmi: Math.round(bmi * 10) / 10,
+      bmr: Math.round(bmr),
+      targetCalories: Math.round(target),
+    }));
+  };
 
-        {/* AI Insight Section */}
-        <View style={styles.aiCard}>
-          <View style={styles.aiHeaderRow}>
-             <View style={styles.aiIconContainer}>
-                <Icon name="bulb" size={24} color="#4FC3F7" />
-             </View>
-             <Text style={styles.aiTitle}>AI Health Insight</Text>
-          </View>
-          <Text style={styles.aiText}>{result.aiSuggestion}</Text>
-        </View>
+  // ✅ Save Profile
+  const saveProfile = async () => {
+    if (!user) return;
+    setSaving(true);
 
-        <TouchableOpacity style={styles.outlineButton} onPress={() => setResult(null)}>
-          <Text style={styles.outlineButtonText}>Recalculate Plan</Text>
-        </TouchableOpacity>
-      </View>
-    );
+    const { error } = await supabase.from('profiles').upsert({
+      id: user.id,
+      name: profile.name,
+      age: parseInt(profile.age),
+      weight: parseFloat(profile.weight),
+      height: parseFloat(profile.height),
+      gender: profile.gender,
+      activity_level: profile.activity_level,
+      goal: profile.goal,
+      updated_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      Alert.alert('Error', 'Failed to save profile');
+    } else {
+      calculateHealthMetrics(profile);
+      Toast.show({ type: 'success', text1: 'Profile updated' });
+    }
+    setSaving(false);
+  };
+
+  // ✅ Watch Connection (Google Fit)
+  const connectWatch = async () => {
+    if (Platform.OS === 'web') {
+      Alert.alert('Not Supported', 'Watch connection is not available on web.');
+      return;
+    }
+
+    setIsSyncing(true);
+    try {
+      const options = {
+        scopes: [
+          Scopes.FITNESS_ACTIVITY_READ,
+          Scopes.FITNESS_BODY_READ,
+        ],
+      };
+
+      const result = await GoogleFit.authorize(options);
+      if (result.success) {
+        setIsWatchConnected(true);
+        fetchWatchData();
+      } else {
+        Alert.alert('Failed', 'Google Fit authorization failed.');
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const fetchWatchData = async () => {
+    if (!isWatchConnected) return;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const stepsRes = await GoogleFit.getDailySteps(today);
+    const caloriesRes = await GoogleFit.getDailyCalorieSamples({
+      startDate: today.toISOString(),
+      endDate: tomorrow.toISOString(),
+    });
+
+    if (stepsRes && stepsRes.length > 0) {
+      const totalSteps = stepsRes.find(r => r.source === 'com.google.android.gms:estimated_steps')?.steps[0]?.value || 0;
+      setStats(prev => ({ ...prev, steps: totalSteps }));
+    }
+
+    if (caloriesRes && caloriesRes.length > 0) {
+      const totalCals = caloriesRes.reduce((acc, curr) => acc + curr.calorie, 0);
+      setStats(prev => ({ ...prev, caloriesBurned: Math.round(totalCals) }));
+    }
   };
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.center]}>
-        <ActivityIndicator size="large" color="#007AFF" />
-        <Text style={styles.loadingText}>Analyzing your profile...</Text>
+      <View style={styles.loader}>
+        <ActivityIndicator size="large" color={Colors.light.primary} />
       </View>
-    );
-  }
-
-  if (result) {
-    return (
-      <SafeAreaView style={styles.container}>
-         <ScrollView contentContainerStyle={styles.scrollContent}>
-          {renderResults()}
-         </ScrollView>
-      </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.headerTitle}>Profile Setup</Text>
+      <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+        
+        {/* HEADER SECTION */}
+        <Animated.View entering={FadeInUp} style={styles.header}>
+          <View style={styles.profileImageContainer}>
+            <MaterialCommunityIcons name="account-circle" size={100} color="#334155" />
+            <TouchableOpacity style={styles.editImageBtn}>
+              <MaterialCommunityIcons name="camera" size={20} color="#fff" />
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.userName}>{profile.name || user?.username || 'New User'}</Text>
+          <Text style={styles.userEmail}>{user?.email}</Text>
+        </Animated.View>
 
+        {/* HEALTH OVERVIEW */}
+        <View style={styles.statsRow}>
+          <StatBox label="BMI" value={stats.bmi || '--'} sub={getBMICategory(stats.bmi)} color="#3B82F6" />
+          <StatBox label="Target" value={stats.targetCalories} sub="kcal/day" color="#10B981" />
+          <StatBox label="BMR" value={stats.bmr || '--'} sub="kcal/day" color="#F59E0B" />
+        </View>
+
+        {/* WATCH CONNECTION */}
         <View style={styles.card}>
-          {/* Row 1: Age, Weight, Height */}
-          <View style={styles.row}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Age</Text>
-              <TextInput
-                style={styles.input}
-                value={age}
-                onChangeText={setAge}
-                keyboardType="numeric"
-                placeholderTextColor="#666"
-              />
+          <View style={styles.cardHeader}>
+            <MaterialCommunityIcons name="watch-variant" size={24} color={isWatchConnected ? "#10B981" : "#64748B"} />
+            <Text style={styles.cardTitle}>Smartwatch Sync</Text>
+            {isWatchConnected && <View style={styles.onlineDot} />}
+          </View>
+          
+          <View style={styles.syncContent}>
+            <View style={styles.syncItem}>
+              <Text style={styles.syncLabel}>Today's Steps</Text>
+              <Text style={styles.syncValue}>{stats.steps.toLocaleString()}</Text>
             </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Weight (lbs)</Text>
-              <TextInput
-                style={styles.input}
-                value={weight}
-                onChangeText={setWeight}
-                keyboardType="numeric"
-                placeholderTextColor="#666"
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Height</Text>
-              <View style={styles.heightContainer}>
-                <TextInput
-                  style={[styles.input, styles.heightInput]}
-                  value={heightFt}
-                  onChangeText={setHeightFt}
-                  keyboardType="numeric"
-                  placeholder="Ft"
-                  placeholderTextColor="#666"
-                />
-                <TextInput
-                  style={[styles.input, styles.heightInput]}
-                  value={heightIn}
-                  onChangeText={setHeightIn}
-                  keyboardType="numeric"
-                  placeholder="In"
-                  placeholderTextColor="#666"
-                />
-              </View>
+            <View style={styles.syncItem}>
+              <Text style={styles.syncLabel}>Active Burn</Text>
+              <Text style={styles.syncValue}>{stats.caloriesBurned} kcal</Text>
             </View>
           </View>
 
-          {/* Row 2: Gender, Vegan, Allergy */}
-          <View style={styles.row}>
-            <View style={styles.flex1}>
-              <Dropdown
-                label="Gender"
-                value={gender}
-                options={genderOptions}
-                onSelect={setGender}
-              />
-            </View>
-            <View style={styles.spacer} />
-            <View style={styles.flex1}>
-              <Dropdown
-                label="Vegan"
-                value={vegan}
-                options={veganOptions}
-                onSelect={setVegan}
-              />
-            </View>
-            <View style={styles.spacer} />
-            <View style={styles.flex1}>
-              <Dropdown
-                label="Allergy"
-                value={allergy}
-                options={allergyOptions}
-                onSelect={setAllergy}
-              />
-            </View>
-          </View>
-
-          {/* Row 3: Activity Level */}
-          <View style={styles.centeredRow}>
-            <View style={styles.fullWidth}>
-              <Dropdown
-                label="Activity Level"
-                value={activityLevel}
-                options={activityOptions}
-                onSelect={setActivityLevel}
-              />
-            </View>
-          </View>
-
-          {/* Next Button */}
-          <TouchableOpacity style={styles.button} onPress={handleNext}>
-            <Text style={styles.buttonText}>Generate Plan</Text>
+          <TouchableOpacity 
+            style={[styles.syncBtn, isWatchConnected && styles.syncBtnConnected]} 
+            onPress={isWatchConnected ? fetchWatchData : connectWatch}
+            disabled={isSyncing}
+          >
+            {isSyncing ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <MaterialCommunityIcons name={isWatchConnected ? "refresh" : "link"} size={20} color="#fff" />
+                <Text style={styles.syncBtnText}>
+                  {isWatchConnected ? "Sync Now" : "Connect Google Fit"}
+                </Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
+
+        {/* PROFILE SETTINGS */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Body Measurements</Text>
+          
+          <View style={styles.inputGrid}>
+            <View style={styles.inputWrapper}>
+              <Text style={styles.inputLabel}>Age</Text>
+              <TextInput
+                style={styles.input}
+                value={profile.age}
+                keyboardType="numeric"
+                onChangeText={(v) => setProfile({ ...profile, age: v })}
+                placeholder="Years"
+                placeholderTextColor="#64748B"
+              />
+            </View>
+            <View style={styles.inputWrapper}>
+              <Text style={styles.inputLabel}>Weight (kg)</Text>
+              <TextInput
+                style={styles.input}
+                value={profile.weight}
+                keyboardType="numeric"
+                onChangeText={(v) => setProfile({ ...profile, weight: v })}
+                placeholder="kg"
+                placeholderTextColor="#64748B"
+              />
+            </View>
+            <View style={styles.inputWrapper}>
+              <Text style={styles.inputLabel}>Height (cm)</Text>
+              <TextInput
+                style={styles.input}
+                value={profile.height}
+                keyboardType="numeric"
+                onChangeText={(v) => setProfile({ ...profile, height: v })}
+                placeholder="cm"
+                placeholderTextColor="#64748B"
+              />
+            </View>
+          </View>
+
+          <Text style={styles.inputLabel}>Goal</Text>
+          <View style={styles.chipRow}>
+            {['lose', 'maintain', 'gain'].map((g) => (
+              <TouchableOpacity 
+                key={g} 
+                style={[styles.chip, profile.goal === g && styles.activeChip]}
+                onPress={() => setProfile({ ...profile, goal: g as any })}
+              >
+                <Text style={[styles.chipText, profile.goal === g && styles.activeChipText]}>
+                  {g.charAt(0).toUpperCase() + g.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <TouchableOpacity 
+            style={[styles.saveBtn, saving && styles.disabledBtn]} 
+            onPress={saveProfile}
+            disabled={saving}
+          >
+            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Update Profile</Text>}
+          </TouchableOpacity>
+        </View>
+
+        {/* ACCOUNT ACTION */}
+        <TouchableOpacity style={styles.logoutBtn} onPress={() => supabase.auth.signOut()}>
+          <MaterialCommunityIcons name="logout" size={20} color="#EF4444" />
+          <Text style={styles.logoutText}>Sign Out</Text>
+        </TouchableOpacity>
+
       </ScrollView>
+      <Toast />
     </SafeAreaView>
   );
+};
+
+const StatBox = ({ label, value, sub, color }: any) => (
+  <View style={styles.statBox}>
+    <Text style={styles.statLabel}>{label}</Text>
+    <Text style={[styles.statValue, { color }]}>{value}</Text>
+    <Text style={styles.statSub}>{sub}</Text>
+  </View>
+);
+
+const getBMICategory = (bmi: number) => {
+  if (!bmi) return '--';
+  if (bmi < 18.5) return 'Underweight';
+  if (bmi < 25) return 'Normal';
+  if (bmi < 30) return 'Overweight';
+  return 'Obese';
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
+    backgroundColor: '#0F172A',
   },
-  center: {
+  scrollContainer: {
+    padding: 20,
+    paddingTop: 40,
+  },
+  loader: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: '#0F172A',
   },
-  scrollContent: {
-    padding: 20,
+  header: {
     alignItems: 'center',
-    paddingBottom: 40,
+    marginBottom: 30,
   },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#fff',
+  profileImageContainer: {
+    position: 'relative',
+    marginBottom: 15,
+  },
+  editImageBtn: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: '#3B82F6',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#0F172A',
+  },
+  userName: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#F8FAFC',
+    marginBottom: 4,
+  },
+  userEmail: {
+    fontSize: 14,
+    color: '#94A3B8',
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginBottom: 20,
+  },
+  statBox: {
+    backgroundColor: '#1E293B',
+    padding: 15,
+    borderRadius: 20,
+    width: (width - 60) / 3,
+    alignItems: 'center',
+    ...Shadows.sm,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginBottom: 4,
+    fontWeight: '600',
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  statSub: {
+    fontSize: 10,
+    color: '#64748B',
+    fontWeight: '700',
   },
   card: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 20,
-    padding: 24,
-    width: '100%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 6,
+    backgroundColor: '#1E293B',
+    padding: 20,
+    borderRadius: 24,
+    marginBottom: 20,
+    ...Shadows.md,
   },
-  row: {
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#F8FAFC',
+    marginLeft: 10,
+  },
+  onlineDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+    marginLeft: 10,
+  },
+  syncContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 20,
+    paddingVertical: 10,
+    backgroundColor: '#0F172A',
+    borderRadius: 16,
+  },
+  syncItem: {
+    alignItems: 'center',
+  },
+  syncLabel: {
+    fontSize: 12,
+    color: '#94A3B8',
+    marginBottom: 4,
+  },
+  syncValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#F8FAFC',
+  },
+  syncBtn: {
+    backgroundColor: '#3B82F6',
+    flexDirection: 'row',
+    padding: 16,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+  },
+  syncBtnConnected: {
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#3B82F6',
+  },
+  syncBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  inputGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 20,
   },
-  centeredRow: {
-    alignItems: 'center',
-    marginBottom: 25,
+  inputWrapper: {
+    width: (width - 100) / 3,
   },
-  inputGroup: {
-    flex: 1,
-    alignItems: 'center',
-    marginHorizontal: 5,
-  },
-  label: {
+  inputLabel: {
     fontSize: 13,
-    fontWeight: '600',
-    color: '#888',
+    color: '#94A3B8',
     marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    fontWeight: '600',
   },
   input: {
-    backgroundColor: '#2C2C2C',
+    backgroundColor: '#0F172A',
+    padding: 14,
     borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    width: '100%',
-    textAlign: 'center',
-    color: '#fff',
+    color: '#F8FAFC',
     fontSize: 16,
-    fontWeight: '500',
+    fontWeight: '600',
   },
-  heightContainer: {
+  chipRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
+    gap: 10,
+    marginBottom: 25,
   },
-  heightInput: {
-    width: '47%',
-  },
-  dropdownContainer: {
-    alignItems: 'center',
-    width: '100%',
-  },
-  dropdownButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#2C2C2C',
+  chip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    width: '100%',
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#334155',
   },
-  dropdownText: {
+  activeChip: {
+    backgroundColor: '#3B82F6',
+    borderColor: '#3B82F6',
+  },
+  chipText: {
+    color: '#94A3B8',
+    fontWeight: '600',
+  },
+  activeChipText: {
     color: '#fff',
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '500',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#1E1E1E',
+  saveBtn: {
+    backgroundColor: '#3B82F6',
+    padding: 18,
     borderRadius: 16,
+    alignItems: 'center',
+  },
+  disabledBtn: {
+    opacity: 0.6,
+  },
+  saveBtnText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 16,
+  },
+  logoutBtn: {
+    flexDirection: 'row',
     padding: 20,
-    width: '85%',
-    maxHeight: '60%',
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  optionItem: {
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#2C2C2C',
-  },
-  optionText: {
-    fontSize: 16,
-    color: '#fff',
-  },
-  flex1: {
-    flex: 1,
-  },
-  spacer: {
-    width: 10,
-  },
-  fullWidth: {
-    width: '100%',
-  },
-  button: {
-    backgroundColor: '#007AFF',
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    marginTop: 10,
-    shadowColor: '#007AFF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  loadingText: {
-    color: '#fff',
-    marginTop: 15,
-    fontSize: 16,
-  },
-  resultContainer: {
-    width: '100%',
-    alignItems: 'center',
-  },
-  resultHeader: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 24,
-  },
-  trackerCard: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 20,
-    padding: 24,
-    width: '100%',
-    marginBottom: 24,
-  },
-  trackerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 20,
-  },
-  progressRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  iconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 16,
+    gap: 10,
+    marginBottom: 40,
   },
-  progressContent: {
-    flex: 1,
-  },
-  progressHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  progressLabel: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  progressValue: {
-    color: '#888',
-    fontSize: 14,
-  },
-  progressBarBackground: {
-    height: 8,
-    backgroundColor: '#2C2C2C',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: '100%',
-    borderRadius: 4,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#2C2C2C',
-    marginVertical: 10,
-    marginLeft: 60, 
-  },
-  targetMetContainer: {
-    marginTop: 10,
-    backgroundColor: 'rgba(52, 199, 89, 0.1)',
-    padding: 16,
-    borderRadius: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(52, 199, 89, 0.3)',
-  },
-  targetMetText: {
-    color: '#34C759',
-    fontWeight: 'bold',
+  logoutText: {
+    color: '#EF4444',
+    fontWeight: '700',
     fontSize: 16,
-  },
-  aiCard: {
-    backgroundColor: '#1E1E1E',
-    borderRadius: 20,
-    padding: 24,
-    width: '100%',
-    marginBottom: 30,
-    borderWidth: 1,
-    borderColor: '#2C2C2C',
-  },
-  aiHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  aiIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(79, 195, 247, 0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  aiTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#4FC3F7',
-  },
-  aiText: {
-    color: '#ccc',
-    fontSize: 15,
-    lineHeight: 24,
-  },
-  outlineButton: {
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-    width: '100%',
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  outlineButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
   },
 });
 
