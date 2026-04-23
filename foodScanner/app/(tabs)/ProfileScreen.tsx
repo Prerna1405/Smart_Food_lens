@@ -20,8 +20,10 @@ import { MaterialCommunityIcons, Ionicons, Feather } from '@expo/vector-icons';
 import Animated, { FadeInUp, ZoomIn, Easing, FadeInRight } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLanguage } from '../../components/context/LanguageContext';
+import { useAuth } from '../../components/context/AuthContext';
 
 import { useUser } from '../../components/context/UserContext';
+import { useRouter } from 'expo-router';
 
 const { width } = Dimensions.get('window');
 const EasingCurve = Easing.bezier(0.4, 0.0, 0.2, 1);
@@ -61,6 +63,8 @@ const ProfileScreen = () => {
 
   const { language, setLanguage } = useLanguage();
   const { setUserProfile } = useUser();
+  const { logout } = useAuth();
+  const router = useRouter();
 
   const [profile, setProfile] = useState<ProfileType>({
     name: '',
@@ -205,6 +209,28 @@ const ProfileScreen = () => {
     if (bmi < 25) return 'Healthy';
     if (bmi < 30) return 'Overweight';
     return 'Obese';
+  };
+
+  const handleLogout = async () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Logout',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await logout();
+              router.replace('/login');
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to logout');
+            }
+          },
+        },
+      ]
+    );
   };
 
   if (loading) {
@@ -379,7 +405,7 @@ const ProfileScreen = () => {
             icon="log-out-outline" 
             label="Logout" 
             color={Colors.light.error}
-            onPress={() => supabase.auth.signOut()} 
+            onPress={handleLogout} 
             delay={900}
             hideDivider
           />

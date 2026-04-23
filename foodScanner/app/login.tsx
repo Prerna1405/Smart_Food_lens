@@ -14,10 +14,13 @@ import {
   Dimensions,
 } from 'react-native';
 import { useAuth } from '../components/context/AuthContext';
+import { supabase } from '../lib/supabase';
 import { Colors, Typography, Shadows, BorderRadius, Spacing } from '../constants/theme';
 import { Link, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
+import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
 import Animated, { 
   FadeInUp, 
   FadeInDown, 
@@ -34,12 +37,22 @@ import { ScrollView } from 'react-native-gesture-handler';
 
 const { width, height } = Dimensions.get('window');
 
+WebBrowser.maybeCompleteAuthSession();
+
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [appleLoading, setAppleLoading] = useState(false);
   const { login } = useAuth();
   const router = useRouter();
+
+  const [googleAuth, googlePromptAsync] = Google.useAuthRequest({
+    expoClientId: 'YOUR_GOOGLE_EXPO_CLIENT_ID',
+    webClientId: 'YOUR_GOOGLE_WEB_CLIENT_ID.apps.googleusercontent.com',
+    redirectUri: 'nutriscan://',
+  });
 
   // Background Animation
   const glow1 = useSharedValue(0);
@@ -90,6 +103,55 @@ export default function LoginScreen() {
       Alert.alert('Login Failed', error.message || 'Invalid credentials');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    if (!googleAuth) return;
+    
+    setGoogleLoading(true);
+    try {
+      const { type, params } = await googlePromptAsync();
+      
+      if (type === 'success') {
+        const { data: { user }, error } = await supabase.auth.signInWithIdToken({
+          provider: 'google',
+          token: params.id_token,
+          nonce: params.nonce,
+        });
+        
+        if (error) throw error;
+        
+        if (user) {
+          router.replace('/(tabs)');
+        }
+      }
+    } catch (error: any) {
+      Alert.alert('Google Sign-In Failed', error.message || 'Please try again');
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleAppleSignIn = async () => {
+    setAppleLoading(true);
+    try {
+      const { data: { user }, error } = await supabase.auth.signInWithOAuth({
+        provider: 'apple',
+        options: {
+          redirectTo: 'nutriscan://',
+        },
+      });
+      
+      if (error) throw error;
+      
+      if (user) {
+        router.replace('/(tabs)');
+      }
+    } catch (error: any) {
+      Alert.alert('Apple Sign-In Failed', error.message || 'Please try again');
+    } finally {
+      setAppleLoading(false);
     }
   };
 
@@ -182,11 +244,27 @@ export default function LoginScreen() {
             </View>
 
             <View style={styles.socialRow}>
-              <TouchableOpacity style={styles.socialBtn}>
-                <Ionicons name="logo-google" size={24} color="#EA4335" />
+              <TouchableOpacity 
+                style={styles.socialBtn} 
+                onPress={handleGoogleSignIn}
+                disabled={googleLoading || !googleAuth}
+              >
+                {googleLoading ? (
+                  <ActivityIndicator size="small" color="#EA4335" />
+                ) : (
+                  <Ionicons name="logo-google" size={24} color="#EA4335" />
+                )}
               </TouchableOpacity>
-              <TouchableOpacity style={styles.socialBtn}>
-                <Ionicons name="logo-apple" size={24} color="#000" />
+              <TouchableOpacity 
+                style={styles.socialBtn} 
+                onPress={handleAppleSignIn}
+                disabled={appleLoading}
+              >
+                {appleLoading ? (
+                  <ActivityIndicator size="small" color="#000" />
+                ) : (
+                  <Ionicons name="logo-apple" size={24} color="#000" />
+                )}
               </TouchableOpacity>
             </View>
 
