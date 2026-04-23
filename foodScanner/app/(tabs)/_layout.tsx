@@ -1,136 +1,180 @@
 import { Tabs } from "expo-router";
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { Platform, View, StyleSheet } from "react-native";
-import { Colors } from "../../constants/theme";
+import { Platform, View, StyleSheet, TouchableOpacity, Text } from "react-native";
+import { Colors, Shadows, Spacing, Typography } from "../../constants/theme";
+import Animated, { 
+  FadeInDown, 
+  withTiming, 
+  useAnimatedStyle, 
+  useSharedValue,
+  Easing
+} from "react-native-reanimated";
+import { useEffect } from "react";
 import { BlurView } from "expo-blur";
+import { GlobalChatbot } from "../../components/GlobalChatbot";
+
+const EasingCurve = Easing.bezier(0.4, 0.0, 0.2, 1);
+
+function CustomTabBar({ state, descriptors, navigation, translateY }: any) {
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ translateY: translateY.value }],
+  }));
+
+  return (
+    <Animated.View style={[styles.tabBarContainer, animatedStyle]}>
+      {Platform.OS === 'ios' && (
+        <BlurView intensity={80} tint="light" style={StyleSheet.absoluteFill} />
+      )}
+      <View style={styles.tabBarInner}>
+        {state.routes.map((route: any, index: number) => {
+          const { options } = descriptors[route.key];
+          const label = options.tabBarLabel !== undefined ? options.tabBarLabel : options.title !== undefined ? options.title : route.name;
+          const isFocused = state.index === index;
+
+          if (options.href === null) return null;
+
+          const onPress = () => {
+            const event = navigation.emit({
+              type: 'tabPress',
+              target: route.key,
+              canPreventDefault: true,
+            });
+
+            if (!isFocused && !event.defaultPrevented) {
+              navigation.navigate(route.name);
+            }
+          };
+
+          const iconName = () => {
+            switch (route.name) {
+              case 'index': return isFocused ? 'home' : 'home-outline';
+              case 'stats': return isFocused ? 'stats-chart' : 'stats-chart-outline';
+              case 'scan': return isFocused ? 'camera' : 'camera-outline';
+              case 'chef': return isFocused ? 'restaurant' : 'restaurant-outline';
+              case 'ProfileScreen': return isFocused ? 'person' : 'person-outline';
+              default: return 'help-outline';
+            }
+          };
+
+          if (route.name === 'scan') {
+            return (
+              <TouchableOpacity key={route.key} onPress={onPress} style={styles.scanTab}>
+                <View style={styles.scanIconContainer}>
+                  <Ionicons name={iconName() as any} size={32} color="#fff" />
+                </View>
+              </TouchableOpacity>
+            );
+          }
+
+          return (
+            <TouchableOpacity key={route.key} onPress={onPress} style={styles.tabItem}>
+              <View style={[styles.tabIconContainer, isFocused && styles.activeTabIconContainer]}>
+                <Ionicons 
+                  name={iconName() as any} 
+                  size={20} 
+                  color={isFocused ? '#fff' : Colors.light.tabIconDefault} 
+                />
+              </View>
+              <Text style={[
+                styles.tabLabel, 
+                { color: isFocused ? Colors.light.primary : Colors.light.tabIconDefault }
+              ]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </Animated.View>
+  );
+}
 
 export default function TabLayout() {
+  const translateY = useSharedValue(100);
+
+  useEffect(() => {
+    translateY.value = withTiming(0, {
+      duration: 500,
+      easing: EasingCurve,
+    });
+  }, []);
+
   return (
-    <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: Colors.light.primary,
-        tabBarInactiveTintColor: '#94A3B8',
-        headerShown: false,
-        tabBarShowLabel: true,
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '600',
-          marginBottom: 4,
-        },
-        tabBarStyle: {
-          position: 'absolute',
-          borderTopWidth: 0,
-          elevation: 0,
-          height: Platform.OS === 'ios' ? 88 : 64,
-          backgroundColor: 'transparent',
-        },
-        tabBarBackground: () => (
-          <BlurView 
-            intensity={80} 
-            tint="dark" 
-            style={StyleSheet.absoluteFill} 
-          />
-        ),
-      }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Home",
-          tabBarIcon: ({ color, focused }) => (
-            <View style={focused ? styles.activeTab : null}>
-              <Ionicons name={focused ? "home" : "home-outline"} size={24} color={color} />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="scan"
-        options={{
-          title: "Scan",
-          tabBarIcon: ({ color, focused }) => (
-            <View style={[styles.scanTab, focused && styles.activeScanTab]}>
-              <Ionicons name="camera" size={28} color="#fff" />
-            </View>
-          ),
-          tabBarLabel: () => null,
-        }}
-      />
-      <Tabs.Screen
-        name="calendar"
-        options={{
-          title: "History",
-          tabBarIcon: ({ color, focused }) => (
-            <View style={focused ? styles.activeTab : null}>
-              <Ionicons name={focused ? "calendar" : "calendar-outline"} size={24} color={color} />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="recipe-gen"
-        options={{
-          title: "Recipes",
-          tabBarIcon: ({ color, focused }) => (
-            <View style={focused ? styles.activeTab : null}>
-              <Ionicons name={focused ? "book" : "book-outline"} size={24} color={color} />
-            </View>
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="diet"
-        options={{
-          href: null, // Move old diet tab to the background
-        }}
-      />
-      <Tabs.Screen
-        name="nutrition"
-        options={{
-          href: null, // Hide the nutrition tab
-        }}
-      />
-      <Tabs.Screen
-        name="ProfileScreen"
-        options={{
-          title: "Profile",
-          tabBarIcon: ({ color, focused }) => (
-            <View style={focused ? styles.activeTab : null}>
-              <Ionicons name={focused ? "person" : "person-outline"} size={24} color={color} />
-            </View>
-          ),
-        }}
-      />
-    </Tabs>
+    <View style={{ flex: 1 }}>
+      <Tabs
+        tabBar={(props) => <CustomTabBar {...props} translateY={translateY} />}
+        screenOptions={{
+          headerShown: false,
+        }}>
+        <Tabs.Screen name="index" options={{ title: "Home" }} />
+        <Tabs.Screen name="stats" options={{ title: "Stats" }} />
+        <Tabs.Screen name="scan" options={{ title: "Scan" }} />
+        <Tabs.Screen name="chef" options={{ title: "Chef" }} />
+        <Tabs.Screen name="ProfileScreen" options={{ title: "Profile" }} />
+      </Tabs>
+      <GlobalChatbot />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  activeTab: {
-    padding: 4,
+  tabBarContainer: {
+    backgroundColor: Platform.OS === 'ios' ? 'transparent' : Colors.light.surface,
+    borderTopWidth: Platform.OS === 'ios' ? 0 : 1,
+    borderTopColor: Colors.light.border,
+    height: Platform.OS === 'ios' ? 90 : 75,
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    ...Shadows.lg,
+    overflow: 'hidden',
+  },
+  tabBarInner: {
+    flexDirection: 'row',
+    height: '100%',
+    paddingBottom: Platform.OS === 'ios' ? 30 : 12,
+    paddingTop: 8,
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  tabItem: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
+  },
+  tabIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  activeTabIconContainer: {
+    backgroundColor: Colors.light.primary,
+    ...Shadows.sm,
+  },
+  tabLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    fontFamily: Typography.family.rounded,
   },
   scanTab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -25,
+  },
+  scanIconContainer: {
     width: 56,
     height: 56,
     borderRadius: 28,
     backgroundColor: Colors.light.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: Platform.OS === 'ios' ? 20 : 10,
-    ...Platform.select({
-      web: {
-        boxShadow: `0px 4px 8px ${Colors.light.primary}66`, // 0.4 opacity in hex is ~66
-      },
-      default: {
-        shadowColor: Colors.light.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.4,
-        shadowRadius: 8,
-        elevation: 8,
-      }
-    }),
-  },
-  activeScanTab: {
-    backgroundColor: Colors.light.primary,
-    transform: [{ scale: 1.1 }],
+    ...Shadows.premium,
+    borderWidth: 4,
+    borderColor: '#fff',
   },
 });

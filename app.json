@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "88fd5200-14cf-48fe-ba30-412dd1971026"
+      }
+    },
+    "android": {
+      "package": "com.prerna14.nscopy"
+    }
+  }
+}

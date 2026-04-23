@@ -1,5 +1,8 @@
 fastapi
-uvicorn
+uvicorn[standard]
+openai
+python-dotenv
+requests
 tensorflow
 pillow
 numpy
@@ -13,5 +16,6 @@ openpyxl
 motor
 passlib[bcrypt]
 python-jose[cryptography]
-python-dotenv
 pymongo
+supabase
+supabase-py

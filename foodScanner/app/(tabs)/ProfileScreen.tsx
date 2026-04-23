@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,19 +10,31 @@ import {
   ActivityIndicator,
   Dimensions,
   Alert,
-  Platform,
+  StatusBar,
+  Switch,
 } from 'react-native';
 import Toast from 'react-native-toast-message';
 import { supabase } from '../../lib/supabase';
-import { Colors, Shadows, BorderRadius, Spacing } from '../../constants/theme';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import Animated, { FadeInUp, Layout } from 'react-native-reanimated';
-import { BlurView } from 'expo-blur';
-import GoogleFit, { Scopes } from 'react-native-google-fit';
+import { Colors, Shadows, BorderRadius, Spacing, Typography } from '../../constants/theme';
+import { MaterialCommunityIcons, Ionicons, Feather } from '@expo/vector-icons';
+import Animated, { FadeInUp, ZoomIn, Easing, FadeInRight } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useLanguage } from '../../components/context/LanguageContext';
+
+import { useUser } from '../../components/context/UserContext';
 
 const { width } = Dimensions.get('window');
+const EasingCurve = Easing.bezier(0.4, 0.0, 0.2, 1);
 
-// ✅ Proper Types
+const LANGUAGES = [
+  { code: 'en', name: 'English', flag: '🇺🇸' },
+  { code: 'hi', name: 'Hindi', flag: '🇮🇳' },
+  { code: 'ur', name: 'Urdu', flag: '🇵🇰' },
+  { code: 'es', name: 'Spanish', flag: '🇪🇸' },
+  { code: 'ar', name: 'Arabic', flag: '🇦🇪' },
+  { code: 'fr', name: 'French', flag: '🇫🇷' },
+];
+
 type UserType = {
   id: string;
   email?: string;
@@ -37,14 +49,18 @@ type ProfileType = {
   gender: 'male' | 'female' | 'other';
   activity_level: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
   goal: 'lose' | 'maintain' | 'gain';
+  dietary_preferences: string[];
+  restrictions: string[];
 };
 
 const ProfileScreen = () => {
   const [user, setUser] = useState<UserType | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [isWatchConnected, setIsWatchConnected] = useState(false);
+  const [isNotificationsEnabled, setIsNotificationsEnabled] = useState(true);
+
+  const { language, setLanguage } = useLanguage();
+  const { setUserProfile } = useUser();
 
   const [profile, setProfile] = useState<ProfileType>({
     name: '',
@@ -54,17 +70,16 @@ const ProfileScreen = () => {
     gender: 'male',
     activity_level: 'moderate',
     goal: 'maintain',
+    dietary_preferences: [],
+    restrictions: [],
   });
 
   const [stats, setStats] = useState({
-    steps: 0,
-    caloriesBurned: 0,
     bmi: 0,
     bmr: 0,
     targetCalories: 2000,
   });
 
-  // ✅ Load User
   useEffect(() => {
     getUser();
   }, []);
@@ -94,7 +109,6 @@ const ProfileScreen = () => {
     }
   };
 
-  // ✅ Fetch Profile
   const fetchProfile = async (id: string) => {
     const { data, error } = await supabase
       .from('profiles')
@@ -103,7 +117,7 @@ const ProfileScreen = () => {
       .single();
 
     if (error && error.code !== 'PGRST116') {
-      console.log('Fetch error:', error.message);
+      // Handle fetch error quietly
       return;
     }
 
@@ -116,27 +130,27 @@ const ProfileScreen = () => {
         gender: data.gender || 'male',
         activity_level: data.activity_level || 'moderate',
         goal: data.goal || 'maintain',
+        dietary_preferences: data.dietary_preferences || [],
+        restrictions: data.restrictions || [],
       });
+      setUserProfile(data);
       calculateHealthMetrics(data);
     }
   };
 
   const calculateHealthMetrics = (p: any) => {
     const weight = parseFloat(p.weight);
-    const height = parseFloat(p.height) / 100; // cm to m
+    const height = parseFloat(p.height) / 100;
     const age = parseInt(p.age);
 
     if (!weight || !height || !age) return;
 
-    // BMI
     const bmi = weight / (height * height);
 
-    // BMR (Mifflin-St Jeor Equation)
     let bmr = 10 * weight + 6.25 * (height * 100) - 5 * age;
     if (p.gender === 'male') bmr += 5;
     else bmr -= 161;
 
-    // TDEE (Total Daily Energy Expenditure)
     const multipliers = {
       sedentary: 1.2,
       light: 1.375,
@@ -146,7 +160,6 @@ const ProfileScreen = () => {
     };
     const tdee = bmr * (multipliers[p.activity_level as keyof typeof multipliers] || 1.2);
 
-    // Target Calories
     let target = tdee;
     if (p.goal === 'lose') target -= 500;
     else if (p.goal === 'gain') target += 500;
@@ -159,7 +172,6 @@ const ProfileScreen = () => {
     }));
   };
 
-  // ✅ Save Profile
   const saveProfile = async () => {
     if (!user) return;
     setSaving(true);
@@ -173,6 +185,8 @@ const ProfileScreen = () => {
       gender: profile.gender,
       activity_level: profile.activity_level,
       goal: profile.goal,
+      dietary_preferences: profile.dietary_preferences,
+      restrictions: profile.restrictions,
       updated_at: new Date().toISOString(),
     });
 
@@ -185,59 +199,12 @@ const ProfileScreen = () => {
     setSaving(false);
   };
 
-  // ✅ Watch Connection (Google Fit)
-  const connectWatch = async () => {
-    if (Platform.OS === 'web') {
-      Alert.alert('Not Supported', 'Watch connection is not available on web.');
-      return;
-    }
-
-    setIsSyncing(true);
-    try {
-      const options = {
-        scopes: [
-          Scopes.FITNESS_ACTIVITY_READ,
-          Scopes.FITNESS_BODY_READ,
-        ],
-      };
-
-      const result = await GoogleFit.authorize(options);
-      if (result.success) {
-        setIsWatchConnected(true);
-        fetchWatchData();
-      } else {
-        Alert.alert('Failed', 'Google Fit authorization failed.');
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  const fetchWatchData = async () => {
-    if (!isWatchConnected) return;
-    
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
-    const stepsRes = await GoogleFit.getDailySteps(today);
-    const caloriesRes = await GoogleFit.getDailyCalorieSamples({
-      startDate: today.toISOString(),
-      endDate: tomorrow.toISOString(),
-    });
-
-    if (stepsRes && stepsRes.length > 0) {
-      const totalSteps = stepsRes.find(r => r.source === 'com.google.android.gms:estimated_steps')?.steps[0]?.value || 0;
-      setStats(prev => ({ ...prev, steps: totalSteps }));
-    }
-
-    if (caloriesRes && caloriesRes.length > 0) {
-      const totalCals = caloriesRes.reduce((acc, curr) => acc + curr.calorie, 0);
-      setStats(prev => ({ ...prev, caloriesBurned: Math.round(totalCals) }));
-    }
+  const getBMICategory = (bmi: number) => {
+    if (!bmi) return '--';
+    if (bmi < 18.5) return 'Underweight';
+    if (bmi < 25) return 'Healthy';
+    if (bmi < 30) return 'Overweight';
+    return 'Obese';
   };
 
   if (loading) {
@@ -250,368 +217,479 @@ const ProfileScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" />
       <ScrollView contentContainerStyle={styles.scrollContainer} showsVerticalScrollIndicator={false}>
         
         {/* HEADER SECTION */}
-        <Animated.View entering={FadeInUp} style={styles.header}>
+        <Animated.View entering={FadeInUp.duration(600)} style={styles.header}>
           <View style={styles.profileImageContainer}>
-            <MaterialCommunityIcons name="account-circle" size={100} color="#334155" />
+            <LinearGradient
+              colors={Colors.light.primaryGradient as any}
+              style={styles.avatarCircle}
+            >
+              <Text style={styles.avatarText}>{profile.name?.[0] || user?.username?.[0] || 'U'}</Text>
+            </LinearGradient>
             <TouchableOpacity style={styles.editImageBtn}>
-              <MaterialCommunityIcons name="camera" size={20} color="#fff" />
+              <Ionicons name="camera" size={16} color="#fff" />
             </TouchableOpacity>
           </View>
           <Text style={styles.userName}>{profile.name || user?.username || 'New User'}</Text>
           <Text style={styles.userEmail}>{user?.email}</Text>
+          
+          <TouchableOpacity style={styles.editProfileBtn}>
+            <Text style={styles.editProfileText}>Edit Profile</Text>
+          </TouchableOpacity>
         </Animated.View>
 
-        {/* HEALTH OVERVIEW */}
+        {/* HEALTH DASHBOARD */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Health Overview</Text>
+        </View>
         <View style={styles.statsRow}>
-          <StatBox label="BMI" value={stats.bmi || '--'} sub={getBMICategory(stats.bmi)} color="#3B82F6" />
-          <StatBox label="Target" value={stats.targetCalories} sub="kcal/day" color="#10B981" />
-          <StatBox label="BMR" value={stats.bmr || '--'} sub="kcal/day" color="#F59E0B" />
+          <StatBox 
+            label="BMI" 
+            value={stats.bmi || '--'} 
+            sub={getBMICategory(stats.bmi)} 
+            icon="speedometer-outline"
+            color={Colors.light.primary} 
+            delay={200} 
+          />
+          <StatBox 
+            label="Target" 
+            value={stats.targetCalories} 
+            sub="kcal/day" 
+            icon="flame-outline"
+            color={Colors.light.calories} 
+            delay={300} 
+          />
+          <StatBox 
+            label="BMR" 
+            value={stats.bmr || '--'} 
+            sub="kcal/day" 
+            icon="flash-outline"
+            color={Colors.light.protein} 
+            delay={400} 
+          />
         </View>
 
-        {/* WATCH CONNECTION */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <MaterialCommunityIcons name="watch-variant" size={24} color={isWatchConnected ? "#10B981" : "#64748B"} />
-            <Text style={styles.cardTitle}>Smartwatch Sync</Text>
-            {isWatchConnected && <View style={styles.onlineDot} />}
+        {/* CONNECTED DEVICES (PREMIUM) */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Connected Devices</Text>
+          <View style={styles.premiumBadge}>
+            <Text style={styles.premiumBadgeText}>PREMIUM</Text>
           </View>
+        </View>
+        <View style={styles.settingsCard}>
+          <View style={styles.syncItem}>
+            <View style={styles.syncLeft}>
+              <View style={[styles.syncIconContainer, { backgroundColor: '#3B82F615' }]}>
+                <MaterialCommunityIcons name="apple-safari" size={24} color="#3B82F6" />
+              </View>
+              <View>
+                <Text style={styles.syncTitle}>Apple Health</Text>
+                <Text style={styles.syncStatus}>Connected • Last synced 2m ago</Text>
+              </View>
+            </View>
+            <TouchableOpacity style={styles.syncBtn}>
+              <Text style={styles.syncBtnText}>Sync Now</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.settingDivider} />
+          <View style={styles.syncItem}>
+            <View style={styles.syncLeft}>
+              <View style={[styles.syncIconContainer, { backgroundColor: '#10B98115' }]}>
+                <MaterialCommunityIcons name="watch" size={24} color="#10B981" />
+              </View>
+              <View>
+                <Text style={styles.syncTitle}>Smartwatch</Text>
+                <Text style={styles.syncStatus}>Disconnected</Text>
+              </View>
+            </View>
+            <TouchableOpacity style={[styles.syncBtn, { backgroundColor: '#F1F5F9' }]}>
+              <Text style={[styles.syncBtnText, { color: '#64748B' }]}>Connect</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* APP SETTINGS */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>App Settings</Text>
+        </View>
+        <View style={styles.settingsCard}>
+          <View style={styles.settingItem}>
+            <View style={[styles.settingIconContainer, { backgroundColor: Colors.light.primary + '10' }]}>
+              <Ionicons name="notifications-outline" size={20} color={Colors.light.primary} />
+            </View>
+            <Text style={styles.settingLabel}>Notifications</Text>
+            <Switch 
+              value={isNotificationsEnabled} 
+              onValueChange={setIsNotificationsEnabled}
+              trackColor={{ false: Colors.light.border, true: Colors.light.primary }}
+              thumbColor="#fff"
+            />
+          </View>
+          <View style={styles.settingDivider} />
           
-          <View style={styles.syncContent}>
-            <View style={styles.syncItem}>
-              <Text style={styles.syncLabel}>Today's Steps</Text>
-              <Text style={styles.syncValue}>{stats.steps.toLocaleString()}</Text>
+          <View style={styles.languageContainer}>
+            <View style={styles.settingItem}>
+              <View style={[styles.settingIconContainer, { backgroundColor: Colors.light.primary + '10' }]}>
+                <Ionicons name="language-outline" size={20} color={Colors.light.primary} />
+              </View>
+              <Text style={styles.settingLabel}>Language</Text>
             </View>
-            <View style={styles.syncItem}>
-              <Text style={styles.syncLabel}>Active Burn</Text>
-              <Text style={styles.syncValue}>{stats.caloriesBurned} kcal</Text>
+            <View style={styles.languageOptions}>
+              {LANGUAGES.map((lang) => (
+                <TouchableOpacity 
+                  key={lang.code} 
+                  style={[
+                    styles.langChip, 
+                    language === lang.code && styles.langChipActive
+                  ]}
+                  onPress={() => setLanguage(lang.code)}
+                >
+                  <Text style={styles.langFlag}>{lang.flag}</Text>
+                  <Text style={[
+                    styles.langName,
+                    language === lang.code && styles.langNameActive
+                  ]}>{lang.name}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
-
-          <TouchableOpacity 
-            style={[styles.syncBtn, isWatchConnected && styles.syncBtnConnected]} 
-            onPress={isWatchConnected ? fetchWatchData : connectWatch}
-            disabled={isSyncing}
-          >
-            {isSyncing ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <MaterialCommunityIcons name={isWatchConnected ? "refresh" : "link"} size={20} color="#fff" />
-                <Text style={styles.syncBtnText}>
-                  {isWatchConnected ? "Sync Now" : "Connect Google Fit"}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
         </View>
 
-        {/* PROFILE SETTINGS */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Body Measurements</Text>
-          
-          <View style={styles.inputGrid}>
-            <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Age</Text>
-              <TextInput
-                style={styles.input}
-                value={profile.age}
-                keyboardType="numeric"
-                onChangeText={(v) => setProfile({ ...profile, age: v })}
-                placeholder="Years"
-                placeholderTextColor="#64748B"
-              />
-            </View>
-            <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Weight (kg)</Text>
-              <TextInput
-                style={styles.input}
-                value={profile.weight}
-                keyboardType="numeric"
-                onChangeText={(v) => setProfile({ ...profile, weight: v })}
-                placeholder="kg"
-                placeholderTextColor="#64748B"
-              />
-            </View>
-            <View style={styles.inputWrapper}>
-              <Text style={styles.inputLabel}>Height (cm)</Text>
-              <TextInput
-                style={styles.input}
-                value={profile.height}
-                keyboardType="numeric"
-                onChangeText={(v) => setProfile({ ...profile, height: v })}
-                placeholder="cm"
-                placeholderTextColor="#64748B"
-              />
-            </View>
-          </View>
-
-          <Text style={styles.inputLabel}>Goal</Text>
-          <View style={styles.chipRow}>
-            {['lose', 'maintain', 'gain'].map((g) => (
-              <TouchableOpacity 
-                key={g} 
-                style={[styles.chip, profile.goal === g && styles.activeChip]}
-                onPress={() => setProfile({ ...profile, goal: g as any })}
-              >
-                <Text style={[styles.chipText, profile.goal === g && styles.activeChipText]}>
-                  {g.charAt(0).toUpperCase() + g.slice(1)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <TouchableOpacity 
-            style={[styles.saveBtn, saving && styles.disabledBtn]} 
-            onPress={saveProfile}
-            disabled={saving}
-          >
-            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveBtnText}>Update Profile</Text>}
-          </TouchableOpacity>
+        {/* ACCOUNT */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Account</Text>
+        </View>
+        <View style={styles.settingsCard}>
+          <SettingItem 
+            icon="shield-checkmark-outline" 
+            label="Privacy Policy" 
+            onPress={() => {}} 
+            delay={700}
+          />
+          <SettingItem 
+            icon="help-circle-outline" 
+            label="Help & Support" 
+            onPress={() => {}} 
+            delay={800}
+          />
+          <SettingItem 
+            icon="log-out-outline" 
+            label="Logout" 
+            color={Colors.light.error}
+            onPress={() => supabase.auth.signOut()} 
+            delay={900}
+            hideDivider
+          />
         </View>
 
-        {/* ACCOUNT ACTION */}
-        <TouchableOpacity style={styles.logoutBtn} onPress={() => supabase.auth.signOut()}>
-          <MaterialCommunityIcons name="logout" size={20} color="#EF4444" />
-          <Text style={styles.logoutText}>Sign Out</Text>
-        </TouchableOpacity>
+        <View style={styles.footer}>
+          <Text style={styles.versionText}>NutriScan AI Premium v2.1.0</Text>
+          <Text style={styles.footerText}>Made with ❤️ for a healthier you</Text>
+        </View>
 
+        <View style={{ height: 100 }} />
       </ScrollView>
-      <Toast />
     </SafeAreaView>
   );
 };
 
-const StatBox = ({ label, value, sub, color }: any) => (
-  <View style={styles.statBox}>
-    <Text style={styles.statLabel}>{label}</Text>
+const StatBox = ({ label, value, sub, icon, color, delay }: any) => (
+  <Animated.View entering={ZoomIn.duration(600).delay(delay)} style={styles.statBox}>
+    <View style={[styles.statIconContainer, { backgroundColor: color + '15' }]}>
+      <Ionicons name={icon} size={20} color={color} />
+    </View>
     <Text style={[styles.statValue, { color }]}>{value}</Text>
+    <Text style={styles.statLabel}>{label}</Text>
     <Text style={styles.statSub}>{sub}</Text>
-  </View>
+  </Animated.View>
 );
 
-const getBMICategory = (bmi: number) => {
-  if (!bmi) return '--';
-  if (bmi < 18.5) return 'Underweight';
-  if (bmi < 25) return 'Normal';
-  if (bmi < 30) return 'Overweight';
-  return 'Obese';
-};
+const SettingItem = ({ icon, label, onPress, rightElement, color, delay, hideDivider }: any) => (
+  <Animated.View entering={FadeInRight.duration(500).delay(delay)}>
+    <TouchableOpacity style={styles.settingItem} onPress={onPress} disabled={!onPress}>
+      <View style={[styles.settingIconContainer, { backgroundColor: (color || Colors.light.primary) + '10' }]}>
+        <Ionicons name={icon} size={20} color={color || Colors.light.primary} />
+      </View>
+      <Text style={[styles.settingLabel, color && { color }]}>{label}</Text>
+      {rightElement || <Ionicons name="chevron-forward" size={18} color={Colors.light.textSecondary} />}
+    </TouchableOpacity>
+    {!hideDivider && <View style={styles.settingDivider} />}
+  </Animated.View>
+);
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F172A',
+    backgroundColor: Colors.light.background,
   },
   scrollContainer: {
-    padding: 20,
-    paddingTop: 40,
+    paddingBottom: 40,
   },
   loader: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0F172A',
+    backgroundColor: Colors.light.background,
   },
   header: {
     alignItems: 'center',
-    marginBottom: 30,
+    paddingVertical: 30,
+    backgroundColor: '#fff',
+    borderBottomLeftRadius: BorderRadius.xxl,
+    borderBottomRightRadius: BorderRadius.xxl,
+    ...Shadows.sm,
+    marginBottom: 20,
   },
   profileImageContainer: {
     position: 'relative',
     marginBottom: 15,
   },
+  avatarCircle: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Shadows.premium,
+  },
+  avatarText: {
+    fontSize: 36,
+    fontWeight: Typography.weight.black as any,
+    color: '#fff',
+    fontFamily: Typography.family.rounded,
+  },
   editImageBtn: {
     position: 'absolute',
     bottom: 0,
     right: 0,
-    backgroundColor: '#3B82F6',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    backgroundColor: Colors.light.primary,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 3,
-    borderColor: '#0F172A',
+    borderColor: '#fff',
   },
   userName: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: '#F8FAFC',
-    marginBottom: 4,
+    fontSize: Typography.size.xl,
+    fontWeight: Typography.weight.black as any,
+    color: Colors.light.text,
+    fontFamily: Typography.family.rounded,
   },
   userEmail: {
-    fontSize: 14,
-    color: '#94A3B8',
+    fontSize: Typography.size.sm,
+    color: Colors.light.textSecondary,
+    marginTop: 4,
+    fontWeight: Typography.weight.medium as any,
+  },
+  editProfileBtn: {
+    marginTop: 15,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: Colors.light.primary,
+  },
+  editProfileText: {
+    color: Colors.light.primary,
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.bold as any,
+  },
+  sectionHeader: {
+    paddingHorizontal: Spacing.xl,
+    marginBottom: 15,
+    marginTop: 10,
+  },
+  sectionTitle: {
+    fontSize: Typography.size.lg,
+    fontWeight: Typography.weight.black as any,
+    color: Colors.light.text,
+    fontFamily: Typography.family.rounded,
   },
   statsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 20,
+    paddingHorizontal: Spacing.xl,
+    marginBottom: 30,
   },
   statBox: {
-    backgroundColor: '#1E293B',
-    padding: 15,
-    borderRadius: 20,
-    width: (width - 60) / 3,
+    width: (width - (Spacing.xl * 2) - 24) / 3,
+    backgroundColor: Colors.light.surface,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.lg,
     alignItems: 'center',
     ...Shadows.sm,
   },
-  statLabel: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginBottom: 4,
-    fontWeight: '600',
-  },
-  statValue: {
-    fontSize: 20,
-    fontWeight: '800',
-    marginBottom: 2,
-  },
-  statSub: {
-    fontSize: 10,
-    color: '#64748B',
-    fontWeight: '700',
-  },
-  card: {
-    backgroundColor: '#1E293B',
-    padding: 20,
-    borderRadius: 24,
-    marginBottom: 20,
-    ...Shadows.md,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#F8FAFC',
-    marginLeft: 10,
-  },
-  onlineDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#10B981',
-    marginLeft: 10,
-  },
-  syncContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 20,
-    paddingVertical: 10,
-    backgroundColor: '#0F172A',
-    borderRadius: 16,
-  },
-  syncItem: {
-    alignItems: 'center',
-  },
-  syncLabel: {
-    fontSize: 12,
-    color: '#94A3B8',
-    marginBottom: 4,
-  },
-  syncValue: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#F8FAFC',
-  },
-  syncBtn: {
-    backgroundColor: '#3B82F6',
-    flexDirection: 'row',
-    padding: 16,
-    borderRadius: 16,
+  statIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 10,
+    marginBottom: 10,
   },
-  syncBtnConnected: {
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#3B82F6',
+  statValue: {
+    fontSize: Typography.size.md,
+    fontWeight: Typography.weight.black as any,
+    fontFamily: Typography.family.rounded,
+  },
+  premiumBadge: {
+    backgroundColor: '#F59E0B',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 10,
+  },
+  premiumBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  settingsCard: {
+    backgroundColor: '#fff',
+    marginHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.md,
+    ...Shadows.sm,
+    marginBottom: 20,
+  },
+  syncItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  syncLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  syncIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  syncTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.light.text,
+  },
+  syncStatus: {
+    fontSize: 11,
+    color: Colors.light.textSecondary,
+  },
+  syncBtn: {
+    backgroundColor: Colors.light.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
   },
   syncBtnText: {
     color: '#fff',
+    fontSize: 12,
     fontWeight: '700',
-    fontSize: 16,
   },
-  inputGrid: {
+  settingItem: {
+    fontSize: 10,
+    color: Colors.light.textSecondary,
+    fontWeight: Typography.weight.bold as any,
+    textTransform: 'uppercase',
+    marginTop: 2,
+  },
+  statSub: {
+    fontSize: 10,
+    color: Colors.light.textSecondary,
+    fontWeight: Typography.weight.medium as any,
+  },
+  settingsCard: {
+    backgroundColor: Colors.light.surface,
+    marginHorizontal: Spacing.xl,
+    borderRadius: BorderRadius.xxl,
+    padding: Spacing.sm,
+    ...Shadows.sm,
+  },
+  settingItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  inputWrapper: {
-    width: (width - 100) / 3,
-  },
-  inputLabel: {
-    fontSize: 13,
-    color: '#94A3B8',
-    marginBottom: 8,
-    fontWeight: '600',
-  },
-  input: {
-    backgroundColor: '#0F172A',
-    padding: 14,
-    borderRadius: 12,
-    color: '#F8FAFC',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  chipRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 25,
-  },
-  chip: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: '#0F172A',
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  activeChip: {
-    backgroundColor: '#3B82F6',
-    borderColor: '#3B82F6',
-  },
-  chipText: {
-    color: '#94A3B8',
-    fontWeight: '600',
-  },
-  activeChipText: {
-    color: '#fff',
-  },
-  saveBtn: {
-    backgroundColor: '#3B82F6',
-    padding: 18,
-    borderRadius: 16,
     alignItems: 'center',
+    padding: Spacing.lg,
   },
-  disabledBtn: {
-    opacity: 0.6,
-  },
-  saveBtnText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 16,
-  },
-  logoutBtn: {
-    flexDirection: 'row',
-    padding: 20,
+  settingIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 40,
+    marginRight: 15,
   },
-  logoutText: {
-    color: '#EF4444',
-    fontWeight: '700',
-    fontSize: 16,
+  settingLabel: {
+    flex: 1,
+    fontSize: Typography.size.md,
+    fontWeight: Typography.weight.semibold as any,
+    color: Colors.light.text,
+  },
+  settingDivider: {
+    height: 1,
+    backgroundColor: Colors.light.border,
+    marginLeft: 70,
+    marginRight: 15,
+  },
+  footer: {
+    alignItems: 'center',
+    marginTop: 40,
+  },
+  versionText: {
+    fontSize: Typography.size.xs,
+    color: Colors.light.textSecondary,
+    fontWeight: Typography.weight.bold as any,
+  },
+  footerText: {
+    fontSize: 10,
+    color: Colors.light.textSecondary,
+    marginTop: 4,
+  },
+  languageContainer: {
+    paddingBottom: Spacing.lg,
+  },
+  languageOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.sm,
+    gap: 8,
+  },
+  langChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+    backgroundColor: Colors.light.background,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
+    marginBottom: 8,
+  },
+  langChipActive: {
+    backgroundColor: Colors.light.primary + '10',
+    borderColor: Colors.light.primary,
+  },
+  langFlag: {
+    fontSize: 14,
+    marginRight: 4,
+  },
+  langName: {
+    fontSize: 12,
+    color: Colors.light.textSecondary,
+    fontWeight: Typography.weight.medium as any,
+  },
+  langNameActive: {
+    color: Colors.light.primary,
+    fontWeight: Typography.weight.bold as any,
   },
 });
 

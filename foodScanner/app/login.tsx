@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,45 +10,71 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  StatusBar,
+  Dimensions,
 } from 'react-native';
 import { useAuth } from '../components/context/AuthContext';
-import { Colors } from '../constants/theme';
+import { Colors, Typography, Shadows, BorderRadius, Spacing } from '../constants/theme';
 import { Link, useRouter } from 'expo-router';
-import Icon from '@expo/vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
+import Animated, { 
+  FadeInUp, 
+  FadeInDown, 
+  ZoomIn, 
+  useSharedValue, 
+  useAnimatedStyle, 
+  withRepeat, 
+  withTiming, 
+  withSpring, 
+  Easing 
+} from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
+import { ScrollView } from 'react-native-gesture-handler';
+
+const { width, height } = Dimensions.get('window');
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [resending, setResending] = useState(false);
-  const { login, resendConfirmation } = useAuth();
+  const { login } = useAuth();
   const router = useRouter();
 
-  const validateEmail = (email: string) => {
-    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return re.test(email);
-  };
+  // Background Animation
+  const glow1 = useSharedValue(0);
+  const glow2 = useSharedValue(0);
 
-  const handleResend = async () => {
-    if (!email) {
-      Alert.alert('Error', 'Please enter your email first.');
-      return;
-    }
-    setResending(true);
-    try {
-      await resendConfirmation(email.trim());
-      Toast.show({
-        type: 'success',
-        text1: 'Email Sent',
-        text2: 'Please check your inbox for the link.',
-      });
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to resend confirmation.');
-    } finally {
-      setResending(false);
-    }
-  };
+  useEffect(() => {
+    glow1.value = withRepeat(
+      withTiming(1, { duration: 4000, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true
+    );
+    glow2.value = withRepeat(
+      withTiming(1, { duration: 6000, easing: Easing.inOut(Easing.ease) }),
+      -1,
+      true
+    );
+  }, []);
+
+  const glowStyle1 = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: withSpring(glow1.value * 50) },
+      { translateY: withSpring(glow1.value * 30) },
+      { scale: 1 + glow1.value * 0.2 }
+    ],
+    opacity: 0.3 + glow1.value * 0.2
+  }));
+
+  const glowStyle2 = useAnimatedStyle(() => ({
+    transform: [
+      { translateX: withSpring(-glow2.value * 40) },
+      { translateY: withSpring(-glow2.value * 60) },
+      { scale: 1.2 - glow2.value * 0.1 }
+    ],
+    opacity: 0.2 + glow2.value * 0.2
+  }));
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -56,58 +82,12 @@ export default function LoginScreen() {
       return;
     }
 
-    const trimmedEmail = email.trim();
-    if (!validateEmail(trimmedEmail)) {
-      Alert.alert('Invalid Email', 'Please enter a valid email address (e.g., user@example.com).');
-      return;
-    }
-
     setLoading(true);
     try {
-      await login(trimmedEmail, password);
-      Toast.show({
-        type: 'success',
-        text1: 'Login Successful',
-        text2: 'Welcome back!',
-      });
+      await login(email.trim(), password);
       router.replace('/(tabs)');
     } catch (error: any) {
-      let errorMessage = error.message || 'Please check your credentials.';
-      
-      if (errorMessage.toLowerCase().includes('429') || errorMessage.toLowerCase().includes('too many requests')) {
-        Toast.show({
-          type: 'error',
-          text1: 'Rate Limit Exceeded',
-          text2: 'Too many requests. Please wait a moment.',
-          visibilityTime: 4000,
-        });
-        errorMessage = 'Too many login attempts. Please wait a few minutes.';
-      } else if (errorMessage.toLowerCase().includes('email not confirmed')) {
-        Alert.alert(
-          'Email Not Confirmed',
-          'Your email has not been verified yet. Would you like us to resend the confirmation link?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Resend Link', onPress: handleResend }
-          ]
-        );
-      } else if (errorMessage.toLowerCase().includes('invalid login credentials')) {
-        errorMessage = 'Invalid email or password. If you just signed up, please ensure you have confirmed your email address via the link sent to you.';
-        Toast.show({
-          type: 'error',
-          text1: 'Login Failed',
-          text2: 'Check your credentials or verify your email.',
-          visibilityTime: 5000,
-        });
-      } else {
-        Toast.show({
-          type: 'error',
-          text1: 'Login Failed',
-          text2: errorMessage,
-        });
-      }
-      
-      console.error('[Login Debug]', { error: errorMessage, originalError: error, email: email.trim(), timestamp: new Date().toISOString() });
+      Alert.alert('Login Failed', error.message || 'Invalid credentials');
     } finally {
       setLoading(false);
     }
@@ -115,85 +95,109 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" />
+      
+      {/* Background Animated Glows */}
+      <View style={styles.glowContainer}>
+        <Animated.View style={[styles.glow, glowStyle1, { top: -100, left: -100, backgroundColor: Colors.light.glowPrimary }]} />
+        <Animated.View style={[styles.glow, glowStyle2, { bottom: -150, right: -150, backgroundColor: Colors.light.glowSecondary }]} />
+      </View>
+
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.inner}
       >
-        <TouchableOpacity 
-          style={styles.backButton} 
-          onPress={() => router.back()}
-        >
-          <Icon name="arrow-back" size={24} color="#F8FAFC" />
-        </TouchableOpacity>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <Animated.View entering={FadeInDown.duration(600)} style={styles.header}>
+            <LinearGradient
+              colors={Colors.light.primaryGradient as any}
+              style={styles.logoCircle}
+            >
+              <Ionicons name="sparkles" size={40} color="#fff" />
+            </LinearGradient>
+            <Text style={styles.title}>Welcome Back</Text>
+            <Text style={styles.subtitle}>Sign in to continue your health journey with AI.</Text>
+          </Animated.View>
 
-        <View style={styles.header}>
-          <View style={styles.logoContainer}>
-            <Icon name="fitness-outline" size={48} color={Colors.dark.primary} />
-          </View>
-          <Text style={styles.title}>NutriScan AI</Text>
-          <Text style={styles.subtitle}>Welcome back! Please login to your account.</Text>
-        </View>
-
-        <View style={styles.form}>
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email Address</Text>
-            <View style={styles.inputWrapper}>
-              <Icon name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your email"
-                placeholderTextColor="#64748B"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-              />
+          <Animated.View entering={FadeInUp.delay(200).duration(600)} style={styles.form}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Email Address</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons name="mail-outline" size={20} color={Colors.light.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="name@example.com"
+                  placeholderTextColor={Colors.light.tabIconDefault}
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
+              </View>
             </View>
-          </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
-            <View style={styles.inputWrapper}>
-              <Icon name="lock-closed-outline" size={20} color="#64748B" style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your password"
-                placeholderTextColor="#64748B"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Password</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons name="lock-closed-outline" size={20} color={Colors.light.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="••••••••"
+                  placeholderTextColor={Colors.light.tabIconDefault}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                />
+              </View>
             </View>
-          </View>
 
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>Sign In</Text>
-            )}
-          </TouchableOpacity>
+            <TouchableOpacity style={styles.forgotBtn} onPress={() => router.push('/forgot-password')}>
+              <Text style={styles.forgotText}>Forgot Password?</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            onPress={() => router.push('/forgot-password')}
-            style={{ marginTop: 16, alignSelf: 'center' }}
-          >
-            <Text style={styles.linkText}>Forgot Password?</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.loginBtn}
+              onPress={handleLogin}
+              disabled={loading}
+            >
+              <LinearGradient
+                colors={Colors.light.primaryGradient as any}
+                style={styles.loginGradient}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <View style={styles.btnContent}>
+                    <Text style={styles.loginBtnText}>Sign In</Text>
+                    <Ionicons name="arrow-forward" size={20} color="#fff" />
+                  </View>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
 
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Don't have an account? </Text>
-            <Link href="/register" asChild>
-              <TouchableOpacity>
-                <Text style={styles.linkText}>Sign Up</Text>
+            <View style={styles.dividerRow}>
+              <View style={styles.divider} />
+              <Text style={styles.dividerText}>or continue with</Text>
+              <View style={styles.divider} />
+            </View>
+
+            <View style={styles.socialRow}>
+              <TouchableOpacity style={styles.socialBtn}>
+                <Ionicons name="logo-google" size={24} color="#EA4335" />
               </TouchableOpacity>
-            </Link>
-          </View>
-        </View>
+              <TouchableOpacity style={styles.socialBtn}>
+                <Ionicons name="logo-apple" size={24} color="#000" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>Don't have an account? </Text>
+              <TouchableOpacity onPress={() => router.push('/register')}>
+                <Text style={styles.signUpText}>Sign Up</Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        </ScrollView>
       </KeyboardAvoidingView>
       <Toast />
     </SafeAreaView>
@@ -203,118 +207,163 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F172A', // Using Colors.dark.background
+    backgroundColor: Colors.light.background,
+  },
+  glowContainer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: -1,
+    overflow: 'hidden',
+  },
+  glow: {
+    position: 'absolute',
+    width: 350,
+    height: 350,
+    borderRadius: 175,
   },
   inner: {
     flex: 1,
-    padding: 24,
-    justifyContent: 'center',
   },
-  backButton: {
-    position: 'absolute',
-    top: 20,
-    left: 20,
-    zIndex: 10,
-    padding: 10,
+  scrollContent: {
+    flexGrow: 1,
+    padding: Spacing.xl,
+    justifyContent: 'center',
   },
   header: {
     alignItems: 'center',
-    marginBottom: 48,
+    marginBottom: 40,
   },
-  logoContainer: {
+  logoCircle: {
     width: 80,
     height: 80,
-    borderRadius: 20,
-    backgroundColor: '#1E293B',
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#334155',
+    marginBottom: 20,
+    ...Shadows.premium,
   },
   title: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#F8FAFC',
-    marginBottom: 8,
+    fontSize: Typography.size.xxxl,
+    fontWeight: Typography.weight.black as any,
+    color: Colors.light.text,
+    fontFamily: Typography.family.rounded,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#94A3B8',
+    fontSize: Typography.size.md,
+    color: Colors.light.textSecondary,
     textAlign: 'center',
-    paddingHorizontal: 24,
+    marginTop: 8,
+    paddingHorizontal: 30,
+    lineHeight: 22,
   },
   form: {
     width: '100%',
   },
-  inputContainer: {
+  inputGroup: {
     marginBottom: 20,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#94A3B8',
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.bold as any,
+    color: Colors.light.text,
     marginBottom: 8,
     marginLeft: 4,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
-    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderRadius: BorderRadius.xl,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: Colors.light.border,
     paddingHorizontal: 16,
+    height: 56,
+    ...Shadows.sm,
   },
   inputIcon: {
     marginRight: 12,
   },
   input: {
     flex: 1,
-    height: 52,
-    color: '#F8FAFC',
-    fontSize: 16,
+    color: Colors.light.text,
+    fontSize: Typography.size.md,
+    fontWeight: Typography.weight.medium as any,
   },
-  button: {
-    backgroundColor: '#3B82F6',
+  forgotBtn: {
+    alignSelf: 'flex-end',
+    marginBottom: 24,
+  },
+  forgotText: {
+    color: Colors.light.primary,
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.bold as any,
+  },
+  loginBtn: {
     height: 56,
-    borderRadius: 12,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    ...Shadows.premium,
+  },
+  loginGradient: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 12,
-    ...Platform.select({
-      web: {
-        boxShadow: '0px 4px 8px rgba(59, 130, 246, 0.3)',
-      },
-      default: {
-        shadowColor: '#3B82F6',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 4,
-      }
-    }),
   },
-  buttonDisabled: {
-    opacity: 0.7,
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  buttonText: {
+  loginBtnText: {
     color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: Typography.size.md,
+    fontWeight: Typography.weight.black as any,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 30,
+  },
+  divider: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.light.border,
+  },
+  dividerText: {
+    marginHorizontal: 15,
+    color: Colors.light.textSecondary,
+    fontSize: Typography.size.xs,
+    fontWeight: Typography.weight.bold as any,
+  },
+  socialRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 20,
+    marginBottom: 30,
+  },
+  socialBtn: {
+    width: 60,
+    height: 60,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Shadows.sm,
+    borderWidth: 1,
+    borderColor: Colors.light.border,
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 24,
+    alignItems: 'center',
   },
   footerText: {
-    color: '#94A3B8',
-    fontSize: 15,
+    color: Colors.light.textSecondary,
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.medium as any,
   },
-  linkText: {
-    color: '#3B82F6',
-    fontSize: 15,
-    fontWeight: '700',
+  signUpText: {
+    color: Colors.light.primary,
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.black as any,
   },
 });

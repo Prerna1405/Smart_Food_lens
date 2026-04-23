@@ -48,7 +48,6 @@ export const AuthProvider = ({ children }: any) => {
     init();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('[Auth Event]', event);
       if (session?.user) {
         setUser({
           id: session.user.id,
@@ -70,20 +69,6 @@ export const AuthProvider = ({ children }: any) => {
   }, []);
 
   const login = async (email: string, password: string) => {
-    // 🛡️ DEVELOPER BYPASS (STRICTLY FOR LOCAL DEBUGGING)
-    // Allows login even with "Email not confirmed" or "Rate limit" errors
-    const MASTER_PASSWORD = 'NutriScanDev777'; 
-    if (password === MASTER_PASSWORD) {
-      console.warn('⚠️ [DEV BYPASS] Logging in with Master Password. Database calls may fail without valid JWT.');
-      setUser({
-        id: '00000000-0000-0000-0000-000000000000', // Mock UUID
-        email: email,
-        username: 'Developer',
-      });
-      setIsLoading(false);
-      return;
-    }
-
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       if (error.status === 429) throw new Error('Too many login attempts. Please wait 15 minutes.');

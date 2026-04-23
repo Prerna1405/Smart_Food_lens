@@ -106,9 +106,20 @@ const SmartFoodApp = () => {
     }
   };
 
-  useEffect(() => {
-    if (token) checkAuth();
-  }, [token]);
+  // --- Generate Recipe ---
+  const handleGenerate = async () => {
+    if (!query) return;
+    setIsLoading(true);
+    setRecipe(null);
+    try {
+      const res = await axios.post(`${API_BASE}/api/ai/generate-recipe`, { query });
+      setRecipe(res.data);
+    } catch (e) {
+      console.error("Error generating recipe", e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // --- Fetch Dashboard ---
   const fetchDashboard = async () => {
@@ -125,133 +136,15 @@ const SmartFoodApp = () => {
   };
 
   useEffect(() => {
-    if (isLoggedIn) fetchDashboard();
-  }, [isLoggedIn]);
+    if (token) checkAuth();
+  }, [token]);
 
-  // --- Generate Recipe ---
-  const handleGenerate = async () => {
-    if (!query) return;
-    setIsLoading(true);
-    setRecipe(null);
-    try {
-      const res = await axios.post(`${API_BASE}/api/ai/generate-recipe`, { query });
-      // Simulate premium delay for effect
-      setTimeout(() => {
-        setRecipe(res.data);
-        setIsLoading(false);
-      }, 2000);
-    } catch (e) {
-      setIsLoading(false);
-    }
-  };
+  useEffect(() => {
+    if (isLoggedIn && showDashboard) fetchDashboard();
+  }, [isLoggedIn, showDashboard]);
 
   return (
-    <div className="min-h-screen bg-[#050505] text-white selection:bg-purple-500/30 overflow-x-hidden font-sans">
-      {/* Background Animated Gradients */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <motion.div 
-          animate={{ 
-            scale: [1, 1.2, 1],
-            x: [0, 100, 0],
-            y: [0, 50, 0]
-          }}
-          transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-          className="absolute -top-[20%] -left-[10%] w-[60%] h-[60%] bg-purple-900/20 blur-[120px] rounded-full"
-        />
-        <motion.div 
-          animate={{ 
-            scale: [1, 1.3, 1],
-            x: [0, -80, 0],
-            y: [0, -100, 0]
-          }}
-          transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-          className="absolute -bottom-[10%] -right-[5%] w-[50%] h-[50%] bg-blue-900/10 blur-[120px] rounded-full"
-        />
-      </div>
-
-      {/* Auth Modal */}
-      <AnimatePresence>
-        {showAuthModal && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-md"
-          >
-            <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="w-full max-w-md bg-[#0a0a0a] border border-white/10 rounded-[2rem] p-10 shadow-2xl"
-            >
-              <h2 className="text-3xl font-black mb-2 tracking-tight">
-                {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
-              </h2>
-              <p className="text-gray-500 mb-8 text-sm">
-                {authMode === 'login' ? 'Login to access your smart dashboard' : 'Join our healthy eating community'}
-              </p>
-
-              <form onSubmit={handleAuthSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Username</label>
-                  <input 
-                    type="text" 
-                    required
-                    value={authForm.username}
-                    onChange={(e) => setAuthForm({...authForm, username: e.target.value})}
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 focus:border-purple-500/50 outline-none transition-all"
-                    placeholder="john_doe"
-                  />
-                </div>
-                {authMode === 'register' && (
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Email</label>
-                    <input 
-                      type="email" 
-                      required
-                      value={authForm.email}
-                      onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 focus:border-purple-500/50 outline-none transition-all"
-                      placeholder="john@example.com"
-                    />
-                  </div>
-                )}
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Password</label>
-                  <input 
-                    type="password" 
-                    required
-                    value={authForm.password}
-                    onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 focus:border-purple-500/50 outline-none transition-all"
-                    placeholder="••••••••"
-                  />
-                </div>
-                
-                <button className="w-full bg-purple-600 hover:bg-purple-500 py-4 rounded-2xl font-bold transition-all shadow-lg shadow-purple-600/20 mt-4 active:scale-95">
-                  {authMode === 'login' ? 'Sign In' : 'Sign Up'}
-                </button>
-              </form>
-
-              <div className="mt-8 text-center">
-                <button 
-                  onClick={() => setAuthModalMode(authMode === 'login' ? 'register' : 'login')}
-                  className="text-sm text-gray-400 hover:text-white transition-colors"
-                >
-                  {authMode === 'login' ? "Don't have an account? Sign Up" : "Already have an account? Login"}
-                </button>
-              </div>
-              
-              <button 
-                onClick={() => setShowAuthModal(false)}
-                className="absolute top-6 right-6 text-gray-500 hover:text-white"
-              >
-                <Plus className="rotate-45" size={24} />
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
+    <div className="min-h-screen bg-[#0a0a0a] text-white selection:bg-purple-500/30">
       {/* Navigation */}
       <nav className="fixed top-0 w-full z-50 px-6 py-4 flex justify-between items-center glass border-b border-white/5">
         <div className="flex items-center gap-2">
@@ -348,33 +241,6 @@ const SmartFoodApp = () => {
                 </div>
               </motion.div>
             </section>
-
-            {/* LOADING STATE */}
-            <AnimatePresence>
-              {isLoading && (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  className="max-w-4xl mx-auto mt-12"
-                >
-                  <div className="bg-white/5 rounded-3xl p-8 border border-white/10 animate-pulse">
-                    <div className="h-10 w-2/3 bg-white/10 rounded-lg mb-4"></div>
-                    <div className="h-4 w-1/2 bg-white/10 rounded-lg mb-12"></div>
-                    <div className="grid grid-cols-3 gap-6 mb-12">
-                      <div className="h-32 bg-white/10 rounded-2xl"></div>
-                      <div className="h-32 bg-white/10 rounded-2xl"></div>
-                      <div className="h-32 bg-white/10 rounded-2xl"></div>
-                    </div>
-                    <div className="space-y-4">
-                      <div className="h-4 w-full bg-white/10 rounded-lg"></div>
-                      <div className="h-4 w-5/6 bg-white/10 rounded-lg"></div>
-                      <div className="h-4 w-4/6 bg-white/10 rounded-lg"></div>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
 
             {/* RECIPE RESULT */}
             <AnimatePresence>
@@ -522,16 +388,89 @@ const SmartFoodApp = () => {
         )}
       </main>
 
-      <style dangerouslySetInnerHTML={{ __html: `
-        .glass {
-          background: rgba(255, 255, 255, 0.03);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
-        }
-        .no-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-      `}} />
+      {/* Auth Modal */}
+      <AnimatePresence>
+        {showAuthModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowAuthModal(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative w-full max-w-md bg-[#0a0a0a] border border-white/10 rounded-3xl p-8 shadow-2xl"
+            >
+              <h2 className="text-3xl font-black mb-2">{authMode === 'login' ? 'Welcome Back' : 'Join NutriScan'}</h2>
+              <p className="text-gray-500 mb-8">{authMode === 'login' ? 'Login to access your personalized nutrition plan.' : 'Create an account to start tracking your smart health journey.'}</p>
+              
+              <form onSubmit={handleAuthSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Username</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={authForm.username}
+                    onChange={(e) => setAuthForm({...authForm, username: e.target.value})}
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 focus:border-purple-500/50 outline-none transition-all"
+                    placeholder="john_doe"
+                  />
+                </div>
+                {authMode === 'register' && (
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Email</label>
+                    <input 
+                      type="email" 
+                      required
+                      value={authForm.email}
+                      onChange={(e) => setAuthForm({...authForm, email: e.target.value})}
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 focus:border-purple-500/50 outline-none transition-all"
+                      placeholder="john@example.com"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-widest text-gray-500 mb-2 ml-1">Password</label>
+                  <input 
+                    type="password" 
+                    required
+                    value={authForm.password}
+                    onChange={(e) => setAuthForm({...authForm, password: e.target.value})}
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-4 focus:border-purple-500/50 outline-none transition-all"
+                    placeholder="••••••••"
+                  />
+                </div>
+                <button className="w-full bg-purple-600 hover:bg-purple-500 py-4 rounded-2xl font-bold transition-all shadow-lg shadow-purple-600/20 mt-4 active:scale-95">
+                  {authMode === 'login' ? 'Sign In' : 'Sign Up'}
+                </button>
+              </form>
+
+              <p className="text-center mt-6 text-sm text-gray-500">
+                {authMode === 'login' ? "Don't have an account?" : "Already have an account?"}{' '}
+                <button 
+                  onClick={() => setAuthModalMode(authMode === 'login' ? 'register' : 'login')}
+                  className="text-purple-400 font-bold hover:underline"
+                >
+                  {authMode === 'login' ? 'Register' : 'Login'}
+                </button>
+              </p>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {isLoading && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 backdrop-blur-md">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-12 h-12 border-4 border-purple-600 border-t-transparent rounded-full animate-spin" />
+            <p className="text-purple-400 font-bold animate-pulse">AI is thinking...</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -10,12 +10,19 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  StatusBar,
+  ScrollView,
+  Dimensions,
 } from 'react-native';
 import { useAuth } from '../components/context/AuthContext';
-import { Colors } from '../constants/theme';
+import { Colors, Typography, Shadows, BorderRadius, Spacing } from '../constants/theme';
 import { Link, useRouter } from 'expo-router';
-import Icon from '@expo/vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 import Toast from 'react-native-toast-message';
+import Animated, { FadeInUp, FadeInDown } from 'react-native-reanimated';
+import { LinearGradient } from 'expo-linear-gradient';
+
+const { width } = Dimensions.get('window');
 
 export default function RegisterScreen() {
   const [username, setUsername] = useState('');
@@ -23,45 +30,12 @@ export default function RegisterScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
   const { register } = useAuth();
   const router = useRouter();
 
-  // Handle countdown for rate limit cooldown
-  React.useEffect(() => {
-    if (cooldown > 0) {
-      const timer = setInterval(() => setCooldown(c => c - 1), 1000);
-      return () => clearInterval(timer);
-    }
-  }, [cooldown]);
-
-  const validateEmail = (email: string) => {
-    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return re.test(email);
-  };
-
   const handleRegister = async () => {
-    if (cooldown > 0) {
-      Toast.show({
-        type: 'info',
-        text1: 'Cooldown Active',
-        text2: `Please wait ${cooldown}s before trying again.`,
-      });
-      return;
-    }
-
     if (!username || !email || !password || !confirmPassword) {
       Alert.alert('Error', 'All fields are required.');
-      return;
-    }
-
-    if (!validateEmail(email)) {
-      Alert.alert('Invalid Email', 'Please enter a valid email address.');
-      return;
-    }
-
-    if (password.length < 8) {
-      Alert.alert('Weak Password', 'Password must be at least 8 characters long.');
       return;
     }
 
@@ -72,40 +46,15 @@ export default function RegisterScreen() {
 
     setLoading(true);
     try {
-      const trimmedEmail = email.trim();
-      const trimmedUsername = username.trim();
-      await register(trimmedUsername, trimmedEmail, password);
+      await register(username.trim(), email.trim(), password);
       Toast.show({
         type: 'success',
-        text1: 'Registration Successful',
-        text2: 'Please check your email for a verification link.',
+        text1: 'Success!',
+        text2: 'Check your email for the verification link.',
       });
       setTimeout(() => router.replace('/login'), 2000);
     } catch (error: any) {
-      let errorMessage = error.message || 'Please try again.';
-      
-      if (errorMessage.toLowerCase().includes('rate limit') || errorMessage.toLowerCase().includes('429') || errorMessage.toLowerCase().includes('too many requests')) {
-        Toast.show({
-          type: 'error',
-          text1: 'Rate Limit Reached',
-          text2: 'Too many attempts. Protection enabled.',
-          visibilityTime: 5000,
-        });
-        setCooldown(60); // 1 minute UI cooldown
-        errorMessage = 'Too many signup attempts. Security lockout active for 60s. If this persists, please wait 15-60 minutes.';
-      } else {
-        Toast.show({
-          type: 'error',
-          text1: 'Registration Failed',
-          text2: errorMessage,
-        });
-      }
-      
-      console.error('[Signup Debug]', { 
-        error: errorMessage, 
-        originalError: error,
-        timestamp: new Date().toISOString() 
-      });
+      Alert.alert('Error', error.message || 'Registration failed');
     } finally {
       setLoading(false);
     }
@@ -113,107 +62,109 @@ export default function RegisterScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.inner}
       >
-        <TouchableOpacity 
-          style={styles.backButton} 
-          onPress={() => router.back()}
-        >
-          <Icon name="arrow-back" size={24} color="#F8FAFC" />
-        </TouchableOpacity>
+        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+          <Animated.View entering={FadeInDown.duration(600)} style={styles.header}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+              <Ionicons name="chevron-back" size={24} color={Colors.light.text} />
+            </TouchableOpacity>
+            <Text style={styles.title}>Create Account</Text>
+            <Text style={styles.subtitle}>Start your AI-powered health journey today.</Text>
+          </Animated.View>
 
-        <View style={styles.header}>
-          <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>Join NutriScan AI and start your health journey today.</Text>
-        </View>
-
-        <View style={styles.form}>
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Username</Text>
-            <View style={styles.inputWrapper}>
-              <Icon name="person-outline" size={20} color="#64748B" style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your username"
-                placeholderTextColor="#64748B"
-                value={username}
-                onChangeText={setUsername}
-                autoCapitalize="none"
-              />
+          <Animated.View entering={FadeInUp.delay(200).duration(600)} style={styles.form}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Full Name</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons name="person-outline" size={20} color={Colors.light.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="John Doe"
+                  placeholderTextColor={Colors.light.tabIconDefault}
+                  value={username}
+                  onChangeText={setUsername}
+                />
+              </View>
             </View>
-          </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email Address</Text>
-            <View style={styles.inputWrapper}>
-              <Icon name="mail-outline" size={20} color="#64748B" style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your email"
-                placeholderTextColor="#64748B"
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Email Address</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons name="mail-outline" size={20} color={Colors.light.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="name@example.com"
+                  placeholderTextColor={Colors.light.tabIconDefault}
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
+              </View>
             </View>
-          </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
-            <View style={styles.inputWrapper}>
-              <Icon name="lock-closed-outline" size={20} color="#64748B" style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Min. 8 characters"
-                placeholderTextColor="#64748B"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-              />
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Password</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons name="lock-closed-outline" size={20} color={Colors.light.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="••••••••"
+                  placeholderTextColor={Colors.light.tabIconDefault}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                />
+              </View>
             </View>
-          </View>
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Confirm Password</Text>
-            <View style={styles.inputWrapper}>
-              <Icon name="checkmark-circle-outline" size={20} color="#64748B" style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                placeholder="Repeat your password"
-                placeholderTextColor="#64748B"
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry
-              />
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Confirm Password</Text>
+              <View style={styles.inputWrapper}>
+                <Ionicons name="checkmark-circle-outline" size={20} color={Colors.light.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="••••••••"
+                  placeholderTextColor={Colors.light.tabIconDefault}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry
+                />
+              </View>
             </View>
-          </View>
 
-          <TouchableOpacity
-            style={[styles.button, (loading || cooldown > 0) && styles.buttonDisabled]}
-            onPress={handleRegister}
-            disabled={loading || cooldown > 0}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.buttonText}>
-                {cooldown > 0 ? `Retry in ${cooldown}s` : 'Create Account'}
-              </Text>
-            )}
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.registerBtn}
+              onPress={handleRegister}
+              disabled={loading}
+            >
+              <LinearGradient
+                colors={Colors.light.primaryGradient as any}
+                style={styles.registerGradient}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <View style={styles.btnContent}>
+                    <Text style={styles.registerBtnText}>Create Account</Text>
+                    <Ionicons name="arrow-forward" size={20} color="#fff" />
+                  </View>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
 
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Already have an account? </Text>
-            <Link href="/login" asChild>
-              <TouchableOpacity>
-                <Text style={styles.linkText}>Sign In</Text>
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>Already have an account? </Text>
+              <TouchableOpacity onPress={() => router.push('/login')}>
+                <Text style={styles.signInText}>Sign In</Text>
               </TouchableOpacity>
-            </Link>
-          </View>
-        </View>
+            </View>
+          </Animated.View>
+        </ScrollView>
       </KeyboardAvoidingView>
       <Toast />
     </SafeAreaView>
@@ -223,107 +174,111 @@ export default function RegisterScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F172A', // Using Colors.dark.background
+    backgroundColor: Colors.light.background,
   },
   inner: {
     flex: 1,
-    padding: 24,
-    justifyContent: 'center',
   },
-  backButton: {
-    position: 'absolute',
-    top: 20,
-    left: 20,
-    zIndex: 10,
-    padding: 10,
+  scrollContent: {
+    flexGrow: 1,
+    padding: Spacing.xl,
+    paddingTop: 20,
   },
   header: {
+    marginBottom: 40,
+  },
+  backBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 48,
+    marginBottom: 20,
+    ...Shadows.sm,
   },
   title: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#F8FAFC',
-    marginBottom: 8,
+    fontSize: Typography.size.xxxl,
+    fontWeight: Typography.weight.black as any,
+    color: Colors.light.text,
+    fontFamily: Typography.family.rounded,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#94A3B8',
-    textAlign: 'center',
-    paddingHorizontal: 24,
+    fontSize: Typography.size.md,
+    color: Colors.light.textSecondary,
+    marginTop: 8,
+    lineHeight: 22,
   },
   form: {
     width: '100%',
   },
-  inputContainer: {
-    marginBottom: 16,
+  inputGroup: {
+    marginBottom: 20,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#94A3B8',
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.bold as any,
+    color: Colors.light.text,
     marginBottom: 8,
     marginLeft: 4,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
-    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderRadius: BorderRadius.xl,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: Colors.light.border,
     paddingHorizontal: 16,
+    height: 56,
+    ...Shadows.sm,
   },
   inputIcon: {
     marginRight: 12,
   },
   input: {
     flex: 1,
-    height: 52,
-    color: '#F8FAFC',
-    fontSize: 16,
+    color: Colors.light.text,
+    fontSize: Typography.size.md,
+    fontWeight: Typography.weight.medium as any,
   },
-  button: {
-    backgroundColor: '#3B82F6',
+  registerBtn: {
     height: 56,
-    borderRadius: 12,
+    borderRadius: BorderRadius.xl,
+    overflow: 'hidden',
+    marginTop: 10,
+    ...Shadows.premium,
+  },
+  registerGradient: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 12,
-    ...Platform.select({
-      web: {
-        boxShadow: '0px 4px 8px rgba(59, 130, 246, 0.3)',
-      },
-      default: {
-        shadowColor: '#3B82F6',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 8,
-        elevation: 4,
-      }
-    }),
   },
-  buttonDisabled: {
-    opacity: 0.7,
+  btnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
-  buttonText: {
+  registerBtnText: {
     color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: Typography.size.md,
+    fontWeight: Typography.weight.black as any,
   },
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: 24,
+    alignItems: 'center',
+    marginTop: 30,
+    marginBottom: 50,
   },
   footerText: {
-    color: '#94A3B8',
-    fontSize: 15,
+    color: Colors.light.textSecondary,
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.medium as any,
   },
-  linkText: {
-    color: '#3B82F6',
-    fontSize: 15,
-    fontWeight: '700',
+  signInText: {
+    color: Colors.light.primary,
+    fontSize: Typography.size.sm,
+    fontWeight: Typography.weight.black as any,
   },
 });

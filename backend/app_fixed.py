@@ -1,213 +1,52 @@
 import sys
 import os
-import shutil
-import json
-from datetime import datetime, timedelta
-from typing import Optional, List
-
-# Auth imports
-from passlib.context import CryptContext
-from jose import JWTError, jwt
-from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, EmailStr, Field
-from fastapi import FastAPI, File, UploadFile, Request, HTTPException, Depends, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi.middleware.cors import CORSMiddleware
-import traceback
-from fastapi.responses import JSONResponse
-
-# JWT Configuration
-SECRET_KEY = "your-secret-key-for-jwt-tokens" # In production, use environment variable
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-# MongoDB Configuration
-MONGO_DETAILS = "mongodb://localhost:27017"
-client = AsyncIOMotorClient(MONGO_DETAILS)
-database = client.nutriscan
-users_collection = database.get_collection("users")
-scans_collection = database.get_collection("scans")
-
-# Password hashing
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
-
-# --- Schemas ---
-class UserSchema(BaseModel):
-    username: str
-    email: EmailStr
-    password: str
-
-class UserLogin(BaseModel):
-    username: str
-    password: str
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-
-# --- Auth Helpers ---
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-    user = await users_collection.find_one({"username": token_data.username})
-    if user is None:
-        raise credentials_exception
-    return user
 
 try:
     # Add the parent directory to the path to allow imports from foodmodel
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    print("Appended to path. Attempting to import predict_image from predict_yolo...")
-    from foodmodel.predict_yolo import predict_image, get_nutrition_for_food
-    print("Successfully imported predict_image from predict_yolo.")
+    print("Appended to path. Attempting to import predict_image...")
+    from foodmodel.predict import predict_image
+    print("Successfully imported predict_image.")
 except ImportError as e:
-    print(f"Failed to import predict_image from predict_yolo: {e}")
-    try:
-        from foodmodel.predict import predict_image, get_nutrition_for_food
-        print("Fallback: Successfully imported predict_image from predict.")
-    except ImportError as e2:
-        print(f"Failed to import fallback predict_image: {e2}")
-        predict_image = None
-        get_nutrition_for_food = None
+    print(f"Failed to import predict_image: {e}")
+    predict_image = None
 except Exception as e:
     print(f"An unexpected error occurred during import: {e}")
     predict_image = None
-    get_nutrition_for_food = None
 
-# --- Global Exception Handler ---
-async def catch_exceptions_middleware(request: Request, call_next):
-    try:
-        return await call_next(request)
-    except Exception as e:
-        print(f"Unhandled exception: {e}")
-        traceback.print_exc()
-        return JSONResponse(
-            status_code=500,
-            content={"detail": "Internal Server Error", "error": str(e)},
-            headers={
-                "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
-                "Access-Control-Allow-Credentials": "true",
-            }
-        )
+import fastapi
+from fastapi import FastAPI, File, UploadFile, Request
+from fastapi.middleware.cors import CORSMiddleware
+import shutil
+import json
+import requests
+from datetime import datetime, timedelta
+import os
+import google.generativeai as genai
+
+# Import the new chef router
+from chef_api import router as chef_router
+# Gemini API Key
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    print("WARNING: GEMINI_API_KEY environment variable not set. Gemini features will be disabled.")
+else:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 app = FastAPI()
-app.middleware("http")(catch_exceptions_middleware)
 
-# Enhanced CORS configuration
-origins = [
-    "http://localhost:8081",
-    "http://localhost:8080",
-    "http://localhost:19006",
-    "http://127.0.0.1:8081",
-    "http://127.0.0.1:8080",
-    "http://localhost:8084", # Your web app port
-]
+# SPOONACULAR API CONFIG
+SPOONACULAR_API_KEY = "f8401aa1873d439eb5c5b0c9d86a2bda"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Auth Endpoints ---
-
-@app.post("/api/auth/register", response_model=Token)
-async def register(user: UserSchema):
-    existing_user = await users_collection.find_one({"username": user.username})
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Username already registered")
-    
-    hashed_password = get_password_hash(user.password)
-    new_user = {
-        "username": user.username,
-        "email": user.email,
-        "password": hashed_password,
-        "created_at": datetime.utcnow()
-    }
-    await users_collection.insert_one(new_user)
-    
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
-@app.post("/api/auth/login", response_model=Token)
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = await users_collection.find_one({"username": form_data.username})
-    if not user or not verify_password(form_data.password, user["password"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user["username"]}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
-@app.get("/api/auth/me")
-async def read_users_me(current_user: dict = Depends(get_current_user)):
-    return {"username": current_user["username"], "email": current_user["email"]}
-
-def get_portion_multiplier(unit, quantity):
-    """Portion size logic to match frontend selection."""
-    multipliers = {
-        "g": 0.01,
-        "grams": 0.01,
-        "tsp": 0.05,
-        "tbsp": 0.15,
-        "bowl": 2.5,
-        "cup": 2.4,
-        "piece": 1.0,
-        "half_bowl": 1.25,
-        "1_bowl": 2.5,
-        "2_bowl": 5.0,
-        "1_roti": 0.4,
-        "2_roti": 0.8,
-        "3_roti": 1.2,
-    }
-    norm_unit = unit.lower().replace(' ', '_')
-    base_mult = multipliers.get(norm_unit, 0.01)
-    try:
-        qty = float(quantity) if quantity else 1.0
-    except (ValueError, TypeError):
-        qty = 1.0
-    return base_mult * qty
+app.include_router(chef_router)
 
 # Load nutrition data
 def load_nutrition_data():
@@ -235,6 +74,244 @@ def save_scans(scans):
     with open(scans_path, "w", encoding='utf-8') as f:
         json.dump(scans, f, indent=2)
 
+def get_spoonacular_recipes(query: str = "", diet: str = "", intolerances: str = "", type: str = "", min_protein: int = 0, max_calories: int = 2000, number: int = 25, offset: int = 0, max_time: int = 120, cuisine: str = ""):
+    """Fetch high-quality recipes from Spoonacular with full details."""
+    url = "https://api.spoonacular.com/recipes/complexSearch"
+    params = {
+        "apiKey": SPOONACULAR_API_KEY,
+        "query": query,
+        "diet": diet,
+        "intolerances": intolerances,
+        "type": type,
+        "cuisine": cuisine,
+        "minProtein": min_protein,
+        "maxCalories": max_calories,
+        "maxReadyTime": max_time,
+        "addRecipeInformation": True,
+        "fillIngredients": True,
+        "number": number,
+        "offset": offset,
+        "addRecipeNutrition": True
+    }
+    
+    try:
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        if "results" not in data:
+            return {"recipes": [], "totalResults": 0}
+            
+        formatted_recipes = []
+        for r in data["results"]:
+            # Extract nutrient values
+            nutrients = r.get("nutrition", {}).get("nutrients", [])
+            calories = next((n["amount"] for n in nutrients if n["name"] == "Calories"), 300)
+            protein = next((n["amount"] for n in nutrients if n["name"] == "Protein"), 20)
+            carbs = next((n["amount"] for n in nutrients if n["name"] == "Carbohydrates"), 30)
+            fat = next((n["amount"] for n in nutrients if n["name"] == "Fat"), 10)
+            
+            # Extract instructions properly
+            instructions = r.get("analyzedInstructions", [])
+            steps = []
+            if instructions:
+                for inst_group in instructions:
+                    for step in inst_group.get("steps", []):
+                        steps.append({
+                            "step": len(steps) + 1,
+                            "title": f"Step {len(steps) + 1}",
+                            "instruction": step["step"],
+                            "timer_seconds": 300 if any(keyword in step["step"].lower() for keyword in ["boil", "cook", "bake", "roast", "simmer"]) else 0
+                        })
+            else:
+                # Fallback steps if no analyzed instructions
+                steps = [{"step": 1, "title": "Prepare", "instruction": "Follow standard preparation for this dish.", "timer_seconds": 300}]
+            
+            # Format Spoonacular data to our app's structure
+            formatted_recipes.append({
+                "id": r["id"],
+                "title": r["title"],
+                "image": r["image"],
+                "image_url": r["image"],
+                "readyInMinutes": r.get("readyInMinutes", 30),
+                "cook_time": r.get("readyInMinutes", 30),
+                "prep_time": round(r.get("readyInMinutes", 30) * 0.3),
+                "servings": r.get("servings", 2),
+                "difficulty": "Medium" if r.get("readyInMinutes", 30) > 20 else "Easy",
+                "calories": round(calories),
+                "protein": round(protein),
+                "carbs": round(carbs),
+                "fat": round(fat),
+                "rating": round(r.get("spoonacularScore", 85) / 20, 1),
+                "description": r.get("summary", "").split(".")[0].replace("<b>", "").replace("</b>", "") + ".",
+                "cuisine": r.get("cuisines", ["Global"])[0] if r.get("cuisines") else "Global",
+                "ingredients": [
+                    {
+                        "name": ing["name"].capitalize(),
+                        "quantity": str(round(ing["amount"], 1)),
+                        "unit": ing["unit"]
+                    } for ing in r.get("extendedIngredients", [])
+                ],
+                "steps": steps,
+                "tips": "Try using fresh organic ingredients for enhanced flavor."
+            })
+        return {"recipes": formatted_recipes, "totalResults": data.get("totalResults", 0)}
+    except Exception as e:
+        print(f"Spoonacular Error: {e}")
+        return {"recipes": [], "totalResults": 0}
+
+@app.post("/api/ai/insights")
+async def get_ai_insights(request: Request):
+    """Generate personalized AI insights based on user profile and activity."""
+    try:
+        data = await request.json()
+        profile = data.get("profile", {})
+        today_totals = data.get("today_totals", {"calories": 0, "protein": 0, "carbs": 0, "fat": 0})
+        
+        # 1. Calculate BMR & TDEE (Same logic as frontend for consistency)
+        weight = float(profile.get("weight") or 70)
+        height = float(profile.get("height") or 170)
+        age = int(profile.get("age") or 25)
+        gender = profile.get("gender", "male")
+        activity_level = profile.get("activity_level", "moderate")
+        goal = profile.get("goal", "maintain")
+
+        bmr = 10 * weight + 6.25 * height - 5 * age
+        if gender == 'male': bmr += 5
+        else: bmr -= 161
+
+        multipliers = {
+            "sedentary": 1.2,
+            "light": 1.375,
+            "moderate": 1.55,
+            "active": 1.725,
+            "very_active": 1.9,
+        }
+        tdee = bmr * multipliers.get(activity_level, 1.2)
+        
+        target_calories = tdee
+        if goal == 'lose': target_calories -= 500
+        elif goal == 'gain': target_calories += 500
+        
+        # 2. Dynamic Water Goal
+        # Base: 35ml per kg of body weight
+        water_goal = (weight * 0.035)
+        # Adjust for activity
+        if activity_level in ["active", "very_active"]: water_goal += 0.7
+        elif activity_level == "moderate": water_goal += 0.4
+        
+        # 3. Target Macros
+        target_protein = weight * (1.8 if activity_level in ["active", "very_active"] else 1.2)
+        if goal == "gain": target_protein += 20
+        
+        # 4. Generate Insights
+        insights = []
+        
+        # Calorie Insight
+        cal_diff = target_calories - today_totals["calories"]
+        if cal_diff > 100:
+            insights.append({
+                "id": "cal_1",
+                "title": "Calorie Target",
+                "text": f"You need {round(cal_diff)} kcal more to hit your {goal} goal.",
+                "icon": "flame",
+                "color": "#F59E0B"
+            })
+        elif cal_diff < -100:
+            insights.append({
+                "id": "cal_2",
+                "title": "Calorie Alert",
+                "text": f"You've exceeded your daily target by {round(abs(cal_diff))} kcal.",
+                "icon": "warning",
+                "color": "#EF4444"
+            })
+            
+        # Water Insight
+        insights.append({
+            "id": "water_1",
+            "title": "Hydration Goal",
+            "text": f"Drink {round(water_goal, 1)}L water today based on your {activity_level} lifestyle.",
+            "icon": "water",
+            "color": "#0EA5E9"
+        })
+        
+        # Protein Insight
+        prot_diff = target_protein - today_totals["protein"]
+        if prot_diff > 10:
+            insights.append({
+                "id": "prot_1",
+                "title": "Protein Boost",
+                "text": f"Add {round(prot_diff)}g more protein to support your {activity_level} activity.",
+                "icon": "fitness",
+                "color": "#6366F1"
+            })
+            
+        # Goal Specific
+        if goal == "lose":
+            insights.append({
+                "id": "goal_1",
+                "title": "Weight Loss Tip",
+                "text": "Try to incorporate more fiber-rich vegetables to feel fuller for longer.",
+                "icon": "leaf",
+                "color": "#10B981"
+            })
+        elif goal == "gain":
+            insights.append({
+                "id": "goal_2",
+                "title": "Muscle Gain Tip",
+                "text": "Ensure you're eating enough complex carbs to fuel your workouts.",
+                "icon": "flash",
+                "color": "#8B5CF6"
+            })
+
+        return {
+            "insights": insights,
+            "metrics": {
+                "target_calories": round(target_calories),
+                "target_protein": round(target_protein),
+                "water_goal": round(water_goal, 1),
+                "bmi": round(weight / ((height/100)**2), 1)
+            }
+        }
+    except Exception as e:
+        print(f"AI Insights Error: {e}")
+        return {"error": str(e)}
+
+@app.post("/api/ai/health-report")
+async def get_health_report(request: Request):
+    """Generate a detailed personalized health report."""
+    try:
+        data = await request.json()
+        profile = data.get("profile", {})
+        scans = data.get("scans", [])
+        
+        # Simple rule-based report generator (In production, this would call GPT-4/Gemini)
+        name = profile.get("name", "User")
+        goal = profile.get("goal", "maintain")
+        
+        report = {
+            "summary": f"Hello {name}! Based on your {goal} goal, your nutrition and activity levels are looking stable.",
+            "sections": [
+                {
+                    "title": "Nutrition Analysis",
+                    "content": "Your protein intake is excellent, but we noticed a slight increase in sodium from recent scans. Consider more home-cooked meals.",
+                    "status": "good"
+                },
+                {
+                    "title": "Hydration & Sleep",
+                    "content": "You are consistently hitting 2L of water. Aim for 3L on active days. Your sleep consistency could improve for better recovery.",
+                    "status": "warning"
+                },
+                {
+                    "title": "Pro Recommendations",
+                    "content": "1. Add 20g of fiber to your breakfast.\n2. Incorporate 30 mins of light walking after dinner.\n3. Drink 500ml water immediately after waking up.",
+                    "status": "tip"
+                }
+            ]
+        }
+        return report
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/")
 async def root():
     return {"message": "Welcome to NutriScan Food Nutrition API"}
@@ -252,139 +329,35 @@ async def debug():
         "python_path": sys.path[:5]  # First 5 for brevity
     }
 
-# LOCAL INGREDIENT DATABASE (Priority over API)
-LOCAL_INGREDIENT_DB = {
-    "Aloo Gobi": [
-        {"name": "Potato", "quantity": "100", "unit": "g", "calories": 77, "protein": 2, "carbs": 17, "fat": 0.1},
-        {"name": "Cauliflower", "quantity": "150", "unit": "g", "calories": 38, "protein": 3, "carbs": 7.5, "fat": 0.4},
-        {"name": "Onion", "quantity": "30", "unit": "g", "calories": 12, "protein": 0.3, "carbs": 2.8, "fat": 0},
-        {"name": "Oil", "quantity": "10", "unit": "ml", "calories": 88, "protein": 0, "carbs": 0, "fat": 10},
-        {"name": "Spices", "quantity": "5", "unit": "g", "calories": 15, "protein": 0.5, "carbs": 3, "fat": 0.5}
-    ],
-    "Dal Tadka": [
-        {"name": "Lentils (Toor Dal)", "quantity": "100", "unit": "g", "calories": 116, "protein": 7, "carbs": 20, "fat": 0.4},
-        {"name": "Garlic", "quantity": "5", "unit": "g", "calories": 7, "protein": 0.3, "carbs": 1.6, "fat": 0},
-        {"name": "Tomato", "quantity": "30", "unit": "g", "calories": 5, "protein": 0.3, "carbs": 1.2, "fat": 0},
-        {"name": "Ghee/Oil", "quantity": "10", "unit": "ml", "calories": 90, "protein": 0, "carbs": 0, "fat": 10},
-        {"name": "Onion", "quantity": "30", "unit": "g", "calories": 12, "protein": 0.3, "carbs": 2.8, "fat": 0}
-    ],
-    "Chapati": [
-        {"name": "Whole Wheat Flour", "quantity": "35", "unit": "g", "calories": 120, "protein": 4, "carbs": 25, "fat": 0.5},
-        {"name": "Water", "quantity": "15", "unit": "ml", "calories": 0, "protein": 0, "carbs": 0, "fat": 0},
-        {"name": "Ghee (Optional)", "quantity": "2", "unit": "g", "calories": 18, "protein": 0, "carbs": 0, "fat": 2}
-    ],
-    "Rice": [
-        {"name": "White Rice (Cooked)", "quantity": "150", "unit": "g", "calories": 195, "protein": 4, "carbs": 42, "fat": 0.4},
-        {"name": "Water", "quantity": "0", "unit": "ml", "calories": 0, "protein": 0, "carbs": 0, "fat": 0}
-    ],
-    "Biryani": [
-        {"name": "Basmati Rice", "quantity": "150", "unit": "g", "calories": 195, "protein": 4, "carbs": 42, "fat": 0.4},
-        {"name": "Chicken/Veg", "quantity": "100", "unit": "g", "calories": 165, "protein": 25, "carbs": 0, "fat": 7},
-        {"name": "Oil/Ghee", "quantity": "15", "unit": "ml", "calories": 135, "protein": 0, "carbs": 0, "fat": 15},
-        {"name": "Curd", "quantity": "30", "unit": "g", "calories": 18, "protein": 1, "carbs": 1.5, "fat": 1},
-        {"name": "Spices", "quantity": "10", "unit": "g", "calories": 30, "protein": 1, "carbs": 6, "fat": 1}
-    ],
-    "Chole Bhature": [
-        {"name": "Chickpeas (Chole)", "quantity": "150", "unit": "g", "calories": 240, "protein": 13, "carbs": 40, "fat": 4},
-        {"name": "Refined Flour (Maida)", "quantity": "100", "unit": "g", "calories": 360, "protein": 10, "carbs": 76, "fat": 1},
-        {"name": "Oil", "quantity": "20", "unit": "ml", "calories": 180, "protein": 0, "carbs": 0, "fat": 20},
-        {"name": "Onion & Tomato", "quantity": "50", "unit": "g", "calories": 20, "protein": 1, "carbs": 4, "fat": 0},
-        {"name": "Spices", "quantity": "10", "unit": "g", "calories": 30, "protein": 1, "carbs": 6, "fat": 1}
-    ],
-    "Laddu": [
-        {"name": "Besan (Gram Flour)", "quantity": "50", "unit": "g", "calories": 190, "protein": 11, "carbs": 29, "fat": 3},
-        {"name": "Ghee", "quantity": "25", "unit": "g", "calories": 225, "protein": 0, "carbs": 0, "fat": 25},
-        {"name": "Sugar", "quantity": "30", "unit": "g", "calories": 116, "protein": 0, "carbs": 30, "fat": 0},
-        {"name": "Dry Fruits", "quantity": "5", "unit": "g", "calories": 30, "protein": 1, "carbs": 2, "fat": 2.5}
-    ],
-    "Paneer Butter Masala": [
-        {"name": "Paneer", "quantity": "100", "unit": "g", "calories": 265, "protein": 18, "carbs": 1, "fat": 20},
-        {"name": "Butter", "quantity": "15", "unit": "g", "calories": 105, "protein": 0, "carbs": 0, "fat": 12},
-        {"name": "Cream", "quantity": "20", "unit": "ml", "calories": 40, "protein": 0.5, "carbs": 0.8, "fat": 4},
-        {"name": "Tomato Puree", "quantity": "100", "unit": "ml", "calories": 32, "protein": 1.5, "carbs": 7, "fat": 0},
-        {"name": "Onion", "quantity": "30", "unit": "g", "calories": 12, "protein": 0.3, "carbs": 2.8, "fat": 0}
-    ],
-    "Dosa": [
-        {"name": "Rice & Urad Dal Batter", "quantity": "150", "unit": "g", "calories": 250, "protein": 6, "carbs": 50, "fat": 1},
-        {"name": "Oil/Ghee", "quantity": "10", "unit": "ml", "calories": 90, "protein": 0, "carbs": 0, "fat": 10},
-        {"name": "Potato Masala (Optional)", "quantity": "50", "unit": "g", "calories": 40, "protein": 1, "carbs": 8, "fat": 0.1}
-    ]
-}
-
-@app.post("/generate-recipes")
-async def generate_recipes(request: Request):
-    """Generate personalized recipes using AI based on user profile and goals."""
-    data = await request.json()
-    profile = data.get("profile", {})
-    recent_scans = data.get("recent_scans", [])
+def get_portion_multiplier(unit, quantity):
+    """7. PORTION SIZE SYSTEM logic."""
+    # Base multipliers (relative to 100g database entry)
+    multipliers = {
+        "g": 0.01,         # 1g = 0.01 * 100g
+        "grams": 0.01,
+        "tsp": 0.05,       # 1 tsp approx 5g
+        "tbsp": 0.15,      # 1 tbsp approx 15g
+        "bowl": 2.5,       # 1 bowl approx 250g
+        "cup": 2.4,        # 1 cup approx 240g
+        "piece": 1.0,      # 1 piece approx 100g (default)
+        "half_bowl": 1.25, # 125g
+        "1_bowl": 2.5,     # 250g
+        "2_bowl": 5.0,     # 500g
+        "1_roti": 0.7,     # 1 roti approx 70g
+        "2_roti": 1.4,     # 140g
+        "3_roti": 2.1,     # 210g
+    }
     
-    # Extract user context for the AI prompt
-    dietary_prefs = ", ".join(profile.get("dietary_preferences", [])) or "None"
-    restrictions = ", ".join(profile.get("restrictions", [])) or "None"
-    goal = profile.get("health_goals", "Maintain Weight")
+    # Handle normalized units from frontend
+    norm_unit = unit.lower().replace(' ', '_')
+    base_mult = multipliers.get(norm_unit, 0.01) # Default to grams if unknown
     
-    # Calculate daily needs (fallback)
-    target_cal = profile.get("daily_calorie_target", 2000)
-    
-    print(f"🤖 [AI Recipe Gen] Creating recipes for Goal: {goal}, Diet: {dietary_prefs}")
-
-    # Use Spoonacular's complex search as our AI-powered engine
-    # (In a production environment, this could also be coupled with a LLM like Gemini or GPT)
     try:
-        search_url = "https://api.spoonacular.com/recipes/complexSearch"
-        params = {
-            "apiKey": SPOONACULAR_API_KEY,
-            "diet": dietary_prefs.lower(),
-            "intolerances": restrictions.lower(),
-            "maxCalories": target_cal // 3, # Suggesting a meal that fits ~1/3 of daily target
-            "number": 5,
-            "addRecipeInformation": True,
-            "fillIngredients": True,
-            "sort": "healthiness",
-            "type": "main course"
-        }
+        qty = float(quantity) if quantity else 1.0
+    except (ValueError, TypeError):
+        qty = 1.0
         
-        # Adjust search for specific goals/conditions
-        if "Diabetes" in goal or "Low Carb" in goal:
-            params["maxCarbs"] = 30
-        if "Hypertension" in goal or "Low Sodium" in goal:
-            params["maxSodium"] = 500
-        if "Muscle" in goal or "Gain" in goal:
-            params["minProtein"] = 30
-
-        resp = requests.get(search_url, params=params, timeout=10)
-        recipes_data = resp.json()
-        
-        results = []
-        for r in recipes_data.get("results", []):
-            results.append({
-                "id": r["id"],
-                "title": r["title"],
-                "image": r["image"],
-                "summary": r.get("summary", ""),
-                "readyInMinutes": r.get("readyInMinutes"),
-                "healthScore": r.get("healthScore"),
-                "nutrients": {
-                    "calories": r.get("nutrition", {}).get("nutrients", [{}])[0].get("amount", 0),
-                    # We'll rely on the frontend to display detailed nutrients from info
-                }
-            })
-            
-        return {"recipes": results}
-    except Exception as e:
-        print(f"❌ [AI Error] Recipe generation failed: {e}")
-        return {"error": "Failed to generate recipes", "details": str(e)}
-
-@app.get("/recipe-info/{recipe_id}")
-async def get_recipe_info(recipe_id: int):
-    """Get detailed nutrition and instructions for a specific recipe."""
-    try:
-        url = f"https://api.spoonacular.com/recipes/{recipe_id}/information"
-        params = {"apiKey": SPOONACULAR_API_KEY, "includeNutrition": True}
-        resp = requests.get(url, params=params, timeout=10)
-        return resp.json()
-    except Exception as e:
-        return {"error": str(e)}
+    return base_mult * qty
 
 @app.post("/recalculate")
 async def recalculate(request: Request):
@@ -393,67 +366,51 @@ async def recalculate(request: Request):
     food_name = data.get("food_name")
     ingredients = data.get("ingredients", [])
     portion_unit = data.get("portion_unit", "g")
-    portion_qty = data.get("portion_qty", 1)
+    portion_qty = data.get("portion_qty", 100)
     
-    print(f"--- DEBUG RECALCULATE ---")
-    print(f"Food: {food_name}, Portion: {portion_qty} {portion_unit}")
+    # Use real estimation logic
+    total = {"calories": 0, "protein": 0, "carbs": 0, "fat": 0}
     
-    multiplier = get_portion_multiplier(portion_unit, portion_qty)
-    
-    # 1. Try to get nutrition from the database (Excel match via YOLO logic)
-    base_nutrients = None
-    if get_nutrition_for_food:
-        base_nutrients = get_nutrition_for_food(food_name)
-    
-    # 2. Fallback to LOCAL_INGREDIENT_DB if Excel didn't match
-    if not base_nutrients and food_name in LOCAL_INGREDIENT_DB:
-        ings = LOCAL_INGREDIENT_DB[food_name]
-        total_cal = sum(i.get("calories", 0) for i in ings)
-        total_prot = sum(i.get("protein", 0) for i in ings)
-        total_carb = sum(i.get("carbs", 0) for i in ings)
-        total_fat = sum(i.get("fat", 0) for i in ings)
-        # Assuming LOCAL_INGREDIENT_DB entries represent a "standard portion" (~250g)
-        # Normalize to per 100g base for scaling
-        base_nutrients = {
-            "calories": total_cal / 2.5,
-            "protein": total_prot / 2.5,
-            "carbs": total_carb / 2.5,
-            "fat": total_fat / 2.5
-        }
-
-    # 3. Fallback to local JSON if still nothing
-    if not base_nutrients and food_name:
-        food_lower = food_name.lower()
+    if ingredients:
+        for ing in ingredients:
+            qty = float(ing.get("quantity", 0))
+            unit = ing.get("unit", "g")
+            mult = 1.0
+            if unit == "tsp": mult = 5.0
+            elif unit == "tbsp": mult = 15.0
+            elif unit == "pieces": mult = 50.0
+            
+            total_g = qty * mult
+            total["calories"] += total_g * 1.5
+            total["protein"] += total_g * 0.06
+            total["carbs"] += total_g * 0.15
+            total["fat"] += total_g * 0.05
+    else:
+        # Scale base food nutrition
+        multiplier = get_portion_multiplier(portion_unit, portion_qty)
+        
+        # Fallback nutrition lookup
+        calories = 350
+        protein = 10
+        carbs = 40
+        fat = 10
+        
+        food_lower = food_name.lower() if food_name else ""
         if food_lower in nutrition_data:
             info = nutrition_data[food_lower]
-            base_nutrients = {
-                "calories": info.get("calories_per_100g", 0),
-                "protein": info.get("protein", 0),
-                "carbs": info.get("carbs", 0),
-                "fat": info.get("fat", 0)
-            }
-
-    # 4. Final fallback to API or Average if still nothing
-    if not base_nutrients and food_name:
-        base_nutrients = get_external_nutrition(food_name)
+            calories = info.get("calories_per_100g", 350)
+            protein = info.get("protein", 10)
+            carbs = info.get("carbs", 40)
+            fat = info.get("fat", 10)
+            
+        total = {
+            "calories": calories * multiplier,
+            "protein": protein * multiplier,
+            "carbs": carbs * multiplier,
+            "fat": fat * multiplier
+        }
         
-    if not base_nutrients:
-        # Last resort average
-        base_nutrients = {"calories": 150, "protein": 5, "carbs": 20, "fat": 5}
-
-    # 5. Apply multiplier to base (per 100g) nutrients
-    # multiplier is already (unit_base * quantity / 100)
-    # So scaled = base_per_100g * multiplier
-    scaled = {
-        "calories": round(base_nutrients["calories"] * multiplier, 1),
-        "protein": round(base_nutrients["protein"] * multiplier, 1),
-        "carbs": round(base_nutrients["carbs"] * multiplier, 1),
-        "fat": round(base_nutrients["fat"] * multiplier, 1),
-        "kcal": round(base_nutrients["calories"] * multiplier, 1)
-    }
-    
-    print(f"Scaled result: {scaled['calories']} kcal (Multiplier: {multiplier:.2f})")
-    return scaled
+    return total
 
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
@@ -484,54 +441,6 @@ async def predict(file: UploadFile = File(...)):
         if os.path.exists(file_path):
             os.remove(file_path)
 
-import requests
-from functools import lru_cache
-
-# API Configuration
-SPOONACULAR_API_KEY = "f8401aa1873d439eb5c5b0c9d86a2bda"
-
-@lru_cache(maxsize=128)
-def get_external_nutrition(query: str):
-    """Fetch nutrition from Spoonacular API with caching."""
-    print(f"🌐 [API Fallback] Searching Spoonacular for: {query}")
-    try:
-        # 1. Search for the food item ID
-        search_url = f"https://api.spoonacular.com/food/ingredients/search"
-        params = {"apiKey": SPOONACULAR_API_KEY, "query": query, "number": 1}
-        resp = requests.get(search_url, params=params, timeout=5)
-        data = resp.json()
-        
-        if not data.get("results"):
-            return None
-            
-        ingredient_id = data["results"][0]["id"]
-        
-        # 2. Get detailed nutrition for that ID
-        info_url = f"https://api.spoonacular.com/food/ingredients/{ingredient_id}/information"
-        params = {"apiKey": SPOONACULAR_API_KEY, "amount": 100, "unit": "g"}
-        info_resp = requests.get(info_url, params=params, timeout=5)
-        info_data = info_resp.json()
-        
-        nutrients = info_data.get("nutrition", {}).get("nutrients", [])
-        
-        # Helper to find specific nutrient
-        def find_n(name):
-            for n in nutrients:
-                if n["name"].lower() == name.lower():
-                    return n["amount"]
-            return 0
-            
-        return {
-            "calories": find_n("Calories"),
-            "protein": find_n("Protein"),
-            "carbs": find_n("Carbohydrates"),
-            "fat": find_n("Fat"),
-            "source": "Spoonacular API"
-        }
-    except Exception as e:
-        print(f"❌ [API Error] Spoonacular failed: {e}")
-        return None
-
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(..., alias="image")):
     if predict_image is None:
@@ -545,62 +454,45 @@ async def analyze(file: UploadFile = File(..., alias="image")):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # 1. CV Recognition (YOLOv8)
         result = predict_image(file_path)
-        
-        if "error" in result:
-            return result
-
         food_name = result.get("food_name") or result.get("food", "")
-        confidence = result.get("confidence", 0.0)
+        confidence = result.get("confidence", 0.95)
         
-        # High confidence check (Requirement: >= 90%)
-        is_high_confidence = confidence >= 0.90
+        calories = float(result.get("calories", 0) or 0)
+        protein = float(result.get("protein", 0) or 0)
+        carbs = float(result.get("carbs", 0) or 0)
+        fat = float(result.get("fat", 0) or 0)
         
-        # 2. Nutrition Retrieval (Local -> External API)
-        nutrition = result.get("nutrition")
-        
-        # Fallback 1: Local JSON fallback
-        if not nutrition and food_name:
+        # Fallback nutrition lookup
+        if calories == 0 and food_name:
             food_lower = food_name.lower()
             if food_lower in nutrition_data:
                 info = nutrition_data[food_lower]
-                nutrition = {
-                    "calories": info.get("calories_per_100g", 0),
-                    "protein": info.get("protein", 0),
-                    "carbs": info.get("carbs", 0),
-                    "fat": info.get("fat", 0),
-                    "source": "Local Database"
-                }
+                calories = info.get("calories_per_100g", 0)
+                protein = info.get("protein", 0)
+                carbs = info.get("carbs", 0)
+                fat = info.get("fat", 0)
+            else:
+                for key in nutrition_data:
+                    if food_lower in key or key in food_lower:
+                        info = nutrition_data[key]
+                        calories = info.get("calories_per_100g", 0)
+                        protein = info.get("protein", 0)
+                        carbs = info.get("carbs", 0)
+                        fat = info.get("fat", 0)
+                        break
         
-        # Fallback 2: Spoonacular API (Requirement: Automatic Fallback)
-        if not nutrition and food_name:
-            nutrition = get_external_nutrition(food_name)
-
-        # 3. Portion Estimation (Requirement: Accurate Recognition)
-        # Simple volume estimation based on bounding boxes or default portion
-        portion_g = result.get("portion_g", 250) # Default 250g if not estimated
-        
-        # Final response assembly (Requirement 2 & 4)
-        if not nutrition:
-            # Absolute last resort fallback to prevent 0 kcal
-            nutrition = {"calories": 150, "protein": 5, "carbs": 20, "fat": 5, "source": "Estimated Average"}
-
         return {
-            "food": food_name,
-            "confidence": round(confidence, 2),
-            "portion_g": portion_g,
-            "kcal": round(nutrition["calories"] * (portion_g / 100), 1),
-            "protein_g": round(nutrition["protein"] * (portion_g / 100), 1),
-            "carbs_g": round(nutrition["carbs"] * (portion_g / 100), 1),
-            "fat_g": round(nutrition["fat"] * (portion_g / 100), 1),
-            "per_100g": nutrition,
-            "status": "Success",
-            "ingredients": result.get("ingredients", [])
+            "food_name": food_name,
+            "confidence": confidence,
+            "calories": calories,
+            "protein": protein,
+            "carbs": carbs,
+            "fat": fat,
+            "ingredients": []
         }
     except Exception as e:
-        print(f"❌ [Analyze Error] {e}")
-        return {"error": f"Internal analysis error: {str(e)}"}
+        return {"error": f"Analyze error: {str(e)}"}
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
@@ -655,81 +547,46 @@ async def get_nutrition(request: dict):
     }
 
 @app.post("/api/scans")
-async def add_scan(request: dict, current_user: Optional[dict] = Depends(get_current_user)):
-    username = current_user["username"] if current_user else "anonymous"
+async def add_scan(request: dict):
+    scans = load_scans()
     
     date = request.get("date", datetime.now().strftime("%Y-%m-%d"))
-    
-    # Handle both formats (single food or list of foodItems)
     food_items = request.get("foodItems", [])
-    if not food_items:
-        food_name = request.get("food_name")
-        nutrients = request.get("nutrients")
-        if food_name and nutrients:
-            food_items = [{"food": food_name, "nutrients": nutrients}]
     
-    if not food_items:
-        return {"success": False, "error": "No food items provided"}
-        
+    date_entry = None
+    for entry in scans:
+        if entry.get("date") == date:
+            date_entry = entry
+            break
+    
+    if date_entry is None:
+        date_entry = {"date": date, "scans": []}
+        scans.append(date_entry)
+    
     new_scan = {
-        "username": username,
-        "date": date,
         "foodItems": food_items,
         "timestamp": datetime.now().isoformat()
     }
+    date_entry["scans"].append(new_scan)
     
-    await scans_collection.insert_one(new_scan)
+    save_scans(scans)
     return {"success": True}
 
-@app.post("/api/ai/generate-recipe")
-async def generate_recipe(request: dict):
-    query = request.get("query", "")
-    # Mocking AI recipe generation for now
-    # In a real app, this would call OpenAI/Gemini
-    return {
-        "title": f"Healthy {query.title()}",
-        "description": "A delicious, nutritionally balanced meal prepared by AI based on your preferences.",
-        "image": "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=1000&auto=format&fit=crop",
-        "ingredients": [
-            {"name": "Organic Greens", "quantity": "2 cups", "icon": "leaf"},
-            {"name": "Plant Protein", "quantity": "150g", "icon": "food-drumstick"},
-            {"name": "Avocado", "quantity": "1/2", "icon": "avocado"},
-            {"name": "Quinoa", "quantity": "1/2 cup", "icon": "seed"}
-        ],
-        "steps": [
-            "Rinse and prepare all organic ingredients.",
-            "Cook the base protein with light seasoning for 12 minutes.",
-            "Assemble the bowl with greens and quinoa.",
-            "Top with sliced avocado and a light vinaigrette."
-        ],
-        "nutrition": {
-            "calories": 450,
-            "protein": 32,
-            "carbs": 28,
-            "fat": 18
-        }
-    }
-
 @app.get("/api/scans/by-date")
-async def get_scans_by_date(date: str, current_user: Optional[dict] = Depends(get_current_user)):
-    username = current_user["username"] if current_user else "anonymous"
+async def get_scans_by_date(date: str):
+    scans = load_scans()
     
-    cursor = scans_collection.find({"username": username, "date": date})
-    scans_list = await cursor.to_list(length=100)
-    
-    # Clean up _id for JSON serialization
-    for s in scans_list:
-        if "_id" in s:
-            s["_id"] = str(s["_id"])
-            
-    totals = {"calories": 0, "protein": 0, "carbs": 0, "fat": 0}
-    for scan in scans_list:
-        for item in scan.get("foodItems", []):
-            nutrients = item.get("nutrients", {})
-            for key in totals:
-                totals[key] += nutrients.get(key, 0)
-                
-    return {"scans": scans_list, "totals": totals}
+    for entry in scans:
+        if entry.get("date") == date:
+            scans_list = entry.get("scans", [])
+            totals = {"calories": 0, "protein": 0, "carbs": 0, "fat": 0}
+            for scan in scans_list:
+                for item in scan.get("foodItems", []):
+                    nutrients = item.get("nutrients", {})
+                    for key in totals:
+                        totals[key] += nutrients.get(key, 0)
+            return {"scans": scans_list, "totals": totals}
+    return {"scans": [], "totals": {"calories": 0, "protein": 0, "carbs": 0, "fat": 0}}
 
 @app.get("/api/scans/last-three-days")
 async def get_last_three_days():
@@ -746,6 +603,53 @@ async def get_last_three_days():
         except:
             continue
     return {"scans": result}
+
+# LOCAL INGREDIENT DATABASE (Mock for demo)
+LOCAL_RECIPE_DB = {
+    "aloo gobi": {
+        "description": "A classic North Indian dry curry made with potatoes and cauliflower, seasoned with turmeric and other spices.",
+        "benefits": ["Rich in Vitamin C", "High Fiber", "Anti-inflammatory"],
+        "prep_time": "15 mins",
+        "cook_time": "25 mins",
+        "difficulty": "Easy",
+        "servings": 2,
+        "tips": "Soak cauliflower in warm salt water for 10 mins before cooking to remove impurities.",
+        "ingredients": [
+            {"name": "Potato", "quantity": "2 medium", "unit": "pieces", "calories": 150},
+            {"name": "Cauliflower", "quantity": "1 medium", "unit": "piece", "calories": 100},
+            {"name": "Onion", "quantity": "1 medium", "unit": "piece", "calories": 40},
+            {"name": "Oil", "quantity": "2", "unit": "tbsp", "calories": 240}
+        ],
+        "steps": [
+            {"step": 1, "title": "Prep Veggies", "instruction": "Cut cauliflower into medium florets and potatoes into small cubes.", "timer_seconds": 300},
+            {"step": 2, "title": "Sauté Aromatics", "instruction": "Heat oil in a pan. Add cumin seeds and onions. Sauté until golden.", "timer_seconds": 300},
+            {"step": 3, "title": "Cook Main Dish", "instruction": "Add potatoes and cauliflower. Sprinkle turmeric, chili powder, and salt. Cover and cook.", "timer_seconds": 900},
+            {"step": 4, "title": "Garnish", "instruction": "Garnish with fresh coriander and serve hot.", "timer_seconds": 60}
+        ]
+    },
+    "dal tadka": {
+        "description": "Smooth and creamy yellow lentils tempered with ghee, garlic, and aromatic spices.",
+        "benefits": ["High Protein", "Easy to Digest", "Iron Rich"],
+        "prep_time": "10 mins",
+        "cook_time": "20 mins",
+        "difficulty": "Medium",
+        "servings": 2,
+        "tips": "For best flavor, use Desi Ghee for the tadka.",
+        "ingredients": [
+            {"name": "Toor Dal", "quantity": "1", "unit": "cup", "calories": 230},
+            {"name": "Ghee", "quantity": "2", "unit": "tbsp", "calories": 260},
+            {"name": "Garlic", "quantity": "4", "unit": "cloves", "calories": 20},
+            {"name": "Spices", "quantity": "1", "unit": "set", "calories": 50}
+        ],
+        "steps": [
+            {"step": 1, "title": "Boil Dal", "instruction": "Pressure cook the washed dal with turmeric and salt until soft.", "timer_seconds": 900},
+            {"step": 2, "title": "Prepare Tadka", "instruction": "Heat ghee. Add cumin, garlic, and dried red chilies. Let it sizzle.", "timer_seconds": 120},
+            {"step": 3, "title": "Combine", "instruction": "Pour the hot tadka over the cooked dal. Cover immediately.", "timer_seconds": 60}
+        ]
+    }
+}
+
+
 
 @app.get("/api/scans/range")
 async def get_scans_range(end: str, days: int = 30):

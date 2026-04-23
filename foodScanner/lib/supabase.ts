@@ -3,8 +3,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import { Platform } from 'react-native';
 
-const supabaseUrl = 'https://nwqadnhmhhvlhbptlbxm.supabase.co';
-const supabaseAnonKey = 'sb_publishable_LfoN1-pEt-7oOm8P6sLNDA_iroWOMAd';
+import Constants from 'expo-constants';
+
+const supabaseUrl = Constants.expoConfig?.extra?.SUPABASE_URL || 'https://nwqadnhmhhvlhbptlbxm.supabase.co';
+const supabaseAnonKey = Constants.expoConfig?.extra?.SUPABASE_ANON_KEY || 'sb_publishable_LfoN1-pEt-7oOm8P6sLNDA_iroWOMAd';
 
 // Robust storage implementation to prevent "window is not defined" in Node/SSR
 const customStorage = {

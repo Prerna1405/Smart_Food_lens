@@ -9,25 +9,33 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "extra": {
-      "API_URL": "http://10.158.199.182:8000"
+      "API_BASE_URL": "YOUR_DEPLOYED_BACKEND_URL",
+      "SUPABASE_URL": "https://nwqadnhmhhvlhbptlbxm.supabase.co",
+      "SUPABASE_ANON_KEY": "sb_publishable_LfoN1-pEt-7oOm8P6sLNDA_iroWOMAd",
+      "router": {},
+      "eas": {
+        "projectId": "319033b9-d66b-4c1c-ab10-431718d8747b"
+      }
     },
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#ffffff"
       },
+      "package": "com.nutriscan.app",
+      "versionCode": 1,
       "permissions": [
-        "ACTIVITY_RECOGNITION",
-        "ACTIVITY_RECOGNITION"
+        "CAMERA",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "INTERNET"
       ],
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.foodScanner"
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
@@ -51,6 +59,9 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "cli": {
+      "appVersionSource": "remote"
     }
   }
 }
